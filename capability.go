@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	v1 "github.com/mosaic-media/sdk/contracts/platform/v1"
 )
@@ -283,6 +284,15 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 		MediaType:   mediaTypeFor(nativeType),
 		Title:       name,
 		ExternalIDs: externalIDs(title),
+		// Streaming availability, stored so the library can be *grouped* by
+		// service. Everything else descriptive is re-derived live from the
+		// provider (ADR 0034); this is written down for the same reason artwork
+		// is (ADR 0071) — a question asked across the whole library cannot be
+		// answered by a round trip per title.
+		// time.Now rather than a Platform clock: the SDK exposes none, and this
+		// is a wall-clock fact about when an external service was asked rather
+		// than a Platform state transition that a test would need to control.
+		Attributes: attributes(title, time.Now()),
 		// Stored on the node rather than re-derived per read (ADR 0071). This is
 		// the metadata the import already holds, so storing it costs nothing and
 		// saves a provider round trip for every card that renders this title.
@@ -459,6 +469,70 @@ func mediaTypeFor(nativeType string) v1.MediaType {
 // externalIDs builds the Work's external-id document — the flat scheme-to-id
 // shape FindContentByExternalID reads. Both ids go in when TMDB has both, so a
 // later lookup under either scheme resolves.
+// WatchAttribute is the key this module writes streaming availability under in a
+// node's attributes document, and WatchAttributeVersion is the shape's version.
+//
+// **They are exported because they are a published shape, not a private one.**
+// `SearchContentQuery.AttributesContain` lets anything query what any module
+// wrote, so the moment a caller filters on `{"tmdbWatch":{"providers":[…]}}`
+// this key is a contract. Changing its meaning breaks a query written against
+// it, which is why the version travels beside it: a consumer can tell a document
+// it understands from one it does not, and a future shape can be written under a
+// new version without silently answering old questions wrongly.
+const (
+	WatchAttribute        = "tmdbWatch"
+	WatchAttributeVersion = 1
+)
+
+// watchAttribute is the stored shape.
+//
+// Providers is a flat array of names *as well as* the richer Offers, and the
+// duplication is the point: containment against a flat array of strings is what
+// a GIN index answers efficiently, and `{"tmdbWatch":{"providers":["Netflix"]}}`
+// is a query somebody can write by hand. Offers carries the terms for a screen
+// that renders the group.
+//
+// CheckedAt is what makes the staleness visible. Nothing refreshes this today —
+// the jobs runner does not exist — and availability churns monthly, so a
+// consumer that groups by it must be able to say how old the answer is, and the
+// eventual refresh needs to know what to re-fetch first.
+type watchAttribute struct {
+	Version   int           `json:"version"`
+	Region    string        `json:"region"`
+	CheckedAt string        `json:"checkedAt"`
+	Providers []string      `json:"providers"`
+	Offers    []storedOffer `json:"offers,omitempty"`
+}
+
+type storedOffer struct {
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+}
+
+// attributes builds the node's attributes document. It returns nil when there is
+// nothing to record, so a node without availability carries no empty shell that
+// a containment query would have to reason about.
+func attributes(title Title, at time.Time) []byte {
+	if title.Watch == nil {
+		return nil
+	}
+	stored := watchAttribute{
+		Version:   WatchAttributeVersion,
+		Region:    title.Watch.Region,
+		CheckedAt: at.UTC().Format(time.RFC3339),
+		Providers: make([]string, 0, len(title.Watch.Offers)),
+	}
+	for _, offer := range title.Watch.Offers {
+		stored.Providers = append(stored.Providers, offer.Provider)
+		stored.Offers = append(stored.Offers, storedOffer{Provider: offer.Provider, Type: offer.Type})
+	}
+	document, err := json.Marshal(map[string]watchAttribute{WatchAttribute: stored})
+	if err != nil {
+		return nil
+	}
+	return document
+}
+
 func externalIDs(title Title) []byte {
 	ids := map[string]string{providerScheme: title.ID}
 	for scheme, value := range map[string]string{

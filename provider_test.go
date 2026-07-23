@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	tmdb "github.com/mosaic-media/module-tmdb"
 	v1 "github.com/mosaic-media/sdk/contracts/platform/v1"
@@ -718,5 +719,178 @@ func TestWatchProvidersNeverBecomeParts(t *testing.T) {
 		if b.SourceProvider != "tmdb" && b.SourceProvider != "imdb" && b.SourceProvider != "tvdb" {
 			t.Errorf("unexpected binding %q; watch providers must not be bound as sources", b.SourceProvider)
 		}
+	}
+}
+
+// Availability is *stored* on the node, not only projected onto a detail. This
+// is what makes grouping a library by service possible at all: the question is
+// asked across the whole library, and a round trip per title cannot answer it.
+
+func TestImportStoresWatchAvailabilityOnTheNode(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	result, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	var document map[string]struct {
+		Version   int      `json:"version"`
+		Region    string   `json:"region"`
+		CheckedAt string   `json:"checkedAt"`
+		Providers []string `json:"providers"`
+		Offers    []struct {
+			Provider string `json:"provider"`
+			Type     string `json:"type"`
+		} `json:"offers"`
+	}
+	if err := json.Unmarshal(content.nodes[result.WorkID].Attributes, &document); err != nil {
+		t.Fatalf("attributes are not the expected document: %v", err)
+	}
+
+	stored, ok := document[tmdb.WatchAttribute]
+	if !ok {
+		t.Fatalf("no %q key in attributes: %s", tmdb.WatchAttribute, content.nodes[result.WorkID].Attributes)
+	}
+	if stored.Version != tmdb.WatchAttributeVersion {
+		t.Errorf("version = %d, want %d", stored.Version, tmdb.WatchAttributeVersion)
+	}
+	if stored.Region != "GB" {
+		t.Errorf("region = %q; availability is meaningless without the region it applies to", stored.Region)
+	}
+
+	// The flat provider array is what a containment query matches — the richer
+	// offers cannot be asked of an index this way.
+	want := []string{"Prime Video", "Netflix", "Apple TV"}
+	if len(stored.Providers) != len(want) {
+		t.Fatalf("providers = %v, want %v", stored.Providers, want)
+	}
+	for i, name := range want {
+		if stored.Providers[i] != name {
+			t.Errorf("provider %d = %q, want %q", i, stored.Providers[i], name)
+		}
+	}
+	if len(stored.Offers) != 3 || stored.Offers[0].Type != "subscription" {
+		t.Errorf("offers = %+v, want the terms alongside the names", stored.Offers)
+	}
+
+	// Nothing refreshes this, so a consumer must be able to say how old it is.
+	if _, err := time.Parse(time.RFC3339, stored.CheckedAt); err != nil {
+		t.Errorf("checkedAt = %q, not an RFC3339 timestamp: %v", stored.CheckedAt, err)
+	}
+}
+
+func TestImportStoresNoAttributesWithoutAvailability(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	// No region, so no availability — and therefore no empty shell that a
+	// containment query would have to reason about.
+	result, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if attributes := content.nodes[result.WorkID].Attributes; len(attributes) != 0 {
+		t.Fatalf("attributes = %s, want none", attributes)
+	}
+}
+
+// The shape a containment query is written against. It is exported precisely
+// because it is a published key rather than a private one, and this test is what
+// stops it drifting silently.
+func TestTheStoredShapeIsQueryableByContainment(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	if _, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	}); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	// This is the filter a caller would pass as SearchContentQuery.
+	// AttributesContain. Asserting it against the document the module actually
+	// wrote is what keeps the two from drifting apart — they live in different
+	// repositories and nothing else connects them.
+	filter := []byte(`{"` + tmdb.WatchAttribute + `":{"providers":["Netflix"]}}`)
+	if !jsonContains(t, content.nodes[importedWorkID(t, content)].Attributes, filter) {
+		t.Fatalf("the stored document does not satisfy the documented query shape\n stored: %s\n filter: %s",
+			content.nodes[importedWorkID(t, content)].Attributes, filter)
+	}
+}
+
+func importedWorkID(t *testing.T, content *fakeContent) v1.NodeID {
+	t.Helper()
+	for _, id := range content.order {
+		if content.nodes[id].IsRoot() {
+			return id
+		}
+	}
+	t.Fatal("no work was imported")
+	return ""
+}
+
+// jsonContains is a minimal stand-in for the engine's containment operator:
+// every key and array member in want must be present in got. It is not a general
+// implementation — it covers objects, string arrays and scalars, which is what
+// the documented filter shape uses.
+func jsonContains(t *testing.T, gotDoc, wantDoc []byte) bool {
+	t.Helper()
+	var got, want any
+	if err := json.Unmarshal(gotDoc, &got); err != nil {
+		t.Fatalf("stored document is not JSON: %v", err)
+	}
+	if err := json.Unmarshal(wantDoc, &want); err != nil {
+		t.Fatalf("filter is not JSON: %v", err)
+	}
+	return contains(got, want)
+}
+
+func contains(got, want any) bool {
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range w {
+			if !contains(g[key], value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		g, ok := got.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range w {
+			found := false
+			for _, candidate := range g {
+				if contains(candidate, value) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	default:
+		return got == want
 	}
 }

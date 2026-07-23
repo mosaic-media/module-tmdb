@@ -38,6 +38,22 @@ A detail carries where the title can be watched **outside Mosaic** — the servi
 
 A service listed under several terms — rent *and* buy is the norm — appears once, under the best terms available, because the groups are read subscription-first.
 
+**Availability is also written to the node at import**, under the `tmdbWatch` attribute key, so the library can be *grouped* by service. Everything else descriptive is re-derived live from the provider (ADR 0034); this is stored for the same reason artwork is (ADR 0071) — a question asked across the whole library cannot be answered by a round trip per title. The stored shape is:
+
+```json
+{"tmdbWatch": {
+  "version": 1,
+  "region": "GB",
+  "checkedAt": "2026-07-23T21:14:00Z",
+  "providers": ["Prime Video", "Netflix", "Apple TV"],
+  "offers": [{"provider": "Prime Video", "type": "subscription"}]
+}}
+```
+
+The flat `providers` array duplicates `offers` on purpose: containment against an array of strings is what an index answers efficiently, so `SearchContentQuery.AttributesContain` with `{"tmdbWatch":{"providers":["Netflix"]}}` is the query. `WatchAttribute` and `WatchAttributeVersion` are **exported constants**, because the moment anything queries that key it is a published shape rather than a private one.
+
+**Nothing refreshes it.** `checkedAt` exists so a consumer can say how old the answer is and so a future scheduled refresh knows what to re-fetch first — see the limits below.
+
 ### The endpoints it uses
 
 `/search/multi`, `/find/{imdb_id}`, `/movie/{id}` and `/tv/{id}` (with `credits`, `images`, `external_ids`, `keywords`, `recommendations`, `videos`, `watch/providers` and certifications folded in by `append_to_response`), `/tv/{id}/season/{n}`, `/collection/{id}`, `/configuration`, the eight built-in list endpoints, and `/discover/{movie,tv}`.
@@ -81,6 +97,8 @@ Recorded rather than papered over.
 **Artwork candidates are fetched and discarded.** The `images` response carries every poster and backdrop variant; `v1.Artwork` holds one string per slot. ADR 0071 anticipates this — "a future candidate set and user selection grows this value" — but it changes what a stored artwork value *means*, which is an ADR rather than a field.
 
 **Changing any setting echoes the API key through the client.** `configureModule` replaces the settings document wholesale — ADR 0021 has no partial update — so a control that sets a language must carry the key or erase it. The key therefore appears inside this screen's action payloads, reaching only an admin who passed `module.configure` but bypassing the Platform's redaction classes ([ADR 0056](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0056-redaction-classes-are-the-pii-boundary.md)), which cannot see inside an opaque module document. It is never *rendered* — the screen shows the last four characters. The fix is an SDK change: a merge semantic on `configureModule`, or a write-only settings field.
+
+**Grouping the library by provider has no client path, deliberately.** The storage half is here and the query half is `SearchContentQuery.AttributesContain` (SDK `v0.19.0`), so the capability exists — but availability churns monthly and nothing refreshes what was written at import. A group that says "on Netflix" for something that left in March is actively wrong in a way an absent group is not, so the surface waits on the jobs runner, scheduler and system principal. It is recorded in the [unreachable capability](https://github.com/mosaic-media/architecture/blob/main/docs/unreachable-capability.md) register rather than shipped early.
 
 **Deliberately absent.** The person endpoints (a cast chip opening "more from this actor" needs a node kind for a person, which is a design question rather than an endpoint), alternative titles (matters for matching local files; waits on a local-media module), and `/movie/changes` (would drive incremental refresh; waits on the jobs runner, scheduler and system principal).
 

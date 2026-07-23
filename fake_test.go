@@ -363,7 +363,7 @@ func (f *fakeContent) AddContentWork(_ context.Context, cmd v1.AddContentWorkCom
 	n := v1.Node{
 		ID: id, WorkID: id, Kind: v1.NodeWork,
 		MediaType: cmd.MediaType, Title: cmd.Title, Status: v1.NodeActive,
-		ExternalIDs: cmd.ExternalIDs, Artwork: cmd.Artwork,
+		ExternalIDs: cmd.ExternalIDs, Attributes: cmd.Attributes, Artwork: cmd.Artwork,
 	}
 	f.put(n)
 	return v1.AddContentWorkResult{Work: n}, nil
@@ -378,7 +378,7 @@ func (f *fakeContent) AddContentChild(_ context.Context, cmd v1.AddContentChildC
 		Kind: cmd.Kind, MediaType: parent.MediaType,
 		ContainerType: cmd.ContainerType, ItemType: cmd.ItemType,
 		Title: cmd.Title, NaturalOrder: cmd.NaturalOrder, Status: v1.NodeActive,
-		Artwork: cmd.Artwork,
+		ExternalIDs: cmd.ExternalIDs, Attributes: cmd.Attributes, Artwork: cmd.Artwork,
 	}
 	f.put(n)
 	return v1.AddContentChildResult{Node: n}, nil
