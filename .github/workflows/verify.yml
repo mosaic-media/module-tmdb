@@ -1,0 +1,75 @@
+name: verify
+
+# Server-side enforcement on every push and pull request, and the gate the
+# release workflow reuses so a tag can never publish something unverified.
+#
+# It mirrors `docker-compose.test.yml` step for step, and the two must stay in
+# step: that compose file is what a contributor runs, this is what refuses the
+# push. The one difference is deliberate — the compose file exists so a
+# developer's machine cannot satisfy an import a clean one could not, and a
+# fresh CI runner is already that clean machine, so this uses setup-go directly
+# rather than nesting a container inside one. The platform repository's own
+# verify workflow makes the same call.
+#
+# There is no license-header check here, unlike the platform's. Files in this
+# repository carry no SPDX header on purpose (ADR 0022: modules are MIT, the
+# Platform is AGPL), so checking for one would be checking for the wrong thing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Called by release.yml, so the tag path runs exactly these gates rather than
+  # a second copy of them that could drift.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # Includes boundary_test.go, which is the load-bearing one: this module
+      # must compile against the published SDK and SDUI contracts and the
+      # standard library and nothing else. A populated module cache or a stray
+      # replace on a developer's machine can hide a violation; a fresh runner
+      # cannot.
+      - name: go test
+        run: go test ./...
+
+      # The release build links a TMDB read access token in with `-X`. A `-X`
+      # path that no longer resolves is *silently ignored*, so a rename would
+      # ship a tokenless binary with no error anywhere and the failure would
+      # surface at a user's install. This links a canary through the same symbol
+      # path the platform's release build uses and fails if it does not arrive.
+      - name: linker injection guard
+        run: |
+          go test -tags linkercheck \
+            -ldflags "-X github.com/mosaic-media/module-tmdb.defaultReadAccessToken=linker-injection-canary" \
+            -run TestLinkerInjectionPathResolves ./...

@@ -1,0 +1,111 @@
+name: release
+
+# Publishing a Go module is pushing a tag — there is no artifact to upload, and
+# the module proxy pulls from the tag on first request. That makes "published"
+# an unusually easy thing to get wrong: `git push origin v0.5.0` looks like it
+# worked whether or not anything downstream can ever resolve it.
+#
+# So this workflow does the two things a bare tag does not:
+#
+#   1. Runs the full gate *before* the release exists, by reusing verify.yml
+#      rather than a second copy that could drift. A tag must never publish
+#      something unverified.
+#   2. Proves a consumer can actually resolve the version, by resolving it the
+#      way a consumer would — a throwaway module doing `go get` through the
+#      public proxy and checksum database. This is the step that earns its
+#      keep: the proxy can negative-cache a fetch made moments after a repo
+#      becomes public, and the checksum database returns 500 on a first
+#      lookup, and both of those surface as a broken build in the *platform*
+#      repository hours later with nothing pointing back here.
+#
+# **`TMDB_RAC` does not belong in this repository's secrets.** The bundled read
+# access token is applied with `-ldflags -X` at the moment a *binary* is linked,
+# and this repository never links one — only the workflow that builds
+# `cmd/mosaic-platform` can apply it. The secret belongs to the platform repo,
+# or org-wide scoped to it. A copy here would be a credential that nothing reads.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The same gates as an ordinary push, run against the tagged commit.
+  verify:
+    uses: ./.github/workflows/verify.yml
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Pre-1.0 and minor-bumped by hand (see CLAUDE.md), so the shape is
+      # checked rather than assumed. A tag like `0.5.0` or `v0.5` resolves to
+      # nothing for a consumer and is worth catching before a release object
+      # exists for it.
+      - name: Check the tag is a semver version
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag $version is not a vMAJOR.MINOR.PATCH version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_ENV"
+
+      # The module path in go.mod is what a consumer imports; a rename that
+      # missed it would publish a tag under a path nothing requires.
+      - name: Check the module path matches this repository
+        run: |
+          declared=$(go list -m)
+          expected="github.com/${GITHUB_REPOSITORY}"
+          if [ "$declared" != "$expected" ]; then
+            echo "go.mod declares $declared but this is $expected" >&2
+            exit 1
+          fi
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$version" --title "$version" --generate-notes --verify-tag
+
+      # Resolve it exactly as the platform repository will, from a throwaway
+      # module so nothing local can satisfy the import. Retried because the
+      # proxy and checksum database are eventually consistent with a tag that
+      # was pushed seconds ago — a 404 or a 500 here is normal for the first
+      # minute and a hard failure after that.
+      - name: Prove a consumer can resolve it
+        run: |
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          go mod init proxycheck >/dev/null
+          module="github.com/${GITHUB_REPOSITORY}@${version}"
+
+          for attempt in $(seq 1 12); do
+            if go get "$module"; then
+              echo "resolved $module on attempt $attempt"
+              exit 0
+            fi
+            echo "attempt $attempt: not resolvable yet, waiting"
+            sleep 20
+          done
+
+          echo "::error::$module never became resolvable through the public proxy." >&2
+          echo "The tag exists but no consumer can require it. Check the repository is public" >&2
+          echo "and that the tag was pushed, then re-run this job." >&2
+          exit 1
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+          GOFLAGS: -mod=mod

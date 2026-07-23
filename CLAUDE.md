@@ -135,8 +135,27 @@ The Platform requires this at a **tagged version with no `replace`** — a
 pushed, then the Platform's `go.mod` require is bumped to match.
 
 ```bash
-git tag v0.3.0 && git push origin main && git push origin v0.3.0
+git tag v0.6.0 && git push origin main && git push origin v0.6.0
 ```
+
+Pushing the tag is the whole publish — there is no artifact, and the module
+proxy pulls from the tag on first request. `.github/workflows/release.yml` is
+what makes that safe: it re-runs the full gate against the tagged commit before
+a release exists, checks the tag is a semver version and that `go.mod`'s module
+path matches the repository, then **proves a consumer can resolve it** by doing
+`go get` from a throwaway module through the public proxy. That last step is
+there because the proxy and checksum database are eventually consistent with a
+just-pushed tag, and without it a bad publish surfaces as a broken build in the
+platform repository with nothing pointing back here.
+
+**`TMDB_RAC` does not belong in this repository's secrets.** `-ldflags -X`
+applies when a *binary* is linked and this repository never links one; the
+secret belongs to the platform repo, or org-wide scoped to it.
+
+CI (`verify.yml`) mirrors `docker-compose.test.yml` step for step and the two
+must stay in step — the compose file is what you run, the workflow is what
+refuses the push. It uses `setup-go` rather than nesting a container in a
+runner, matching the platform repository's own verify workflow.
 
 The module reports the version that was **actually linked**, via
 `v1.ModuleVersion` reading the build graph — not a hand-maintained constant,
