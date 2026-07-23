@@ -45,12 +45,39 @@ const (
 	defaultLanguage = "en-US"
 )
 
-// errNoAPIKey is returned by every role when the module has no usable
-// credential. It is a sentinel rather than a formatted error because it is the
-// module's one expected failure — TMDB has no anonymous access, so a fresh
-// install hits this until a key is set — and every surface that reports it
-// should say the same thing.
+// errNoAPIKey is returned by every role when the module has no credential at
+// all — no user key and no bundled one. It is a sentinel rather than a formatted
+// error because every surface that reports it should say the same thing.
 var errNoAPIKey = errors.New("TMDB API key not set — add one in Settings › TMDB (the module cannot read anything without it)")
+
+// errCredentialRejected is returned when TMDB refuses the credential that *was*
+// sent. It is deliberately distinct from errNoAPIKey: reporting a revoked or
+// mistyped key as "not set" sends a user to look at an empty field that is not
+// empty, and with a bundled key in play it would be actively misleading — the
+// user has set nothing and there is nothing for them to fix in settings.
+var errCredentialRejected = errors.New("TMDB rejected the credential — if you set your own key, check it in Settings › TMDB; otherwise the key bundled with Mosaic is no longer valid")
+
+// defaultReadAccessToken is a TMDB v4 read access token linked into the binary
+// at build time, so a deployment has working metadata before anyone configures
+// anything. It is empty in an ordinary `go build`; Mosaic's release build sets
+// it:
+//
+//	go build -ldflags "-X github.com/mosaic-media/module-tmdb.defaultReadAccessToken=$TMDB_RAC" ./cmd/mosaic-platform
+//
+// **It is not a secret once the binary ships, and nothing here pretends
+// otherwise.** A string linked into a distributed binary is recoverable with
+// `strings`, so this is a *shared* credential whose exposure is accepted rather
+// than a hidden one. What makes that acceptable is what the credential can do:
+// it is read-only, it reaches only TMDB's public catalogue, and it is revocable
+// centrally if it is abused. What it costs is a shared rate limit and a single
+// point of failure across every deployment that has not set its own — which is
+// exactly why a user can override it, and why the settings screen says plainly
+// which one is in use.
+//
+// It is never written into the settings document, never rendered, and never
+// logged. The one place it could leak is a settings screen that treats it like a
+// user's key, so `settings.APIKey` deliberately only ever holds the user's own.
+var defaultReadAccessToken string
 
 // Capability satisfies the SDK's capability contract and every provider role it
 // declares. The assertions fail to compile if the module drifts from what the
@@ -172,14 +199,39 @@ func (c *Capability) clientFrom(ctx context.Context, document []byte) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	if s.APIKey == "" {
+	token, _, ok := resolveToken(s)
+	if !ok {
 		return nil, errNoAPIKey
 	}
 	// Built once with the default so it holds the credential the fetch needs,
 	// then again with whatever the fetch resolved. Cheap: a Client is a struct of
 	// strings over a shared HTTP client.
-	probe := NewClient(c.httpClient, s, defaultImageConfig)
-	return NewClient(c.httpClient, s, c.images.get(ctx, probe.fetchImageConfig)), nil
+	probe := NewClient(c.httpClient, s, token, defaultImageConfig)
+	return NewClient(c.httpClient, s, token, c.images.get(ctx, probe.fetchImageConfig)), nil
+}
+
+// resolveToken decides which credential to send: the user's own if they set one,
+// otherwise the token linked in at build time. It reports which, so a settings
+// screen can say so without ever holding the bundled value.
+//
+// The order is the whole point of the feature. A deployment works out of the box
+// on Mosaic's shared token, and a user who wants their own rate limit, their own
+// TMDB account, or simply not to depend on ours sets a key and it wins
+// immediately — no flag, no opt-out setting, no restart.
+//
+// **This is the only function that reads defaultReadAccessToken.** Keeping it to
+// one place is what makes "the bundled token is never written into the settings
+// document, never rendered and never logged" a property that can be checked by
+// reading rather than a claim that has to be trusted: settings.APIKey holds the
+// user's key and nothing else, everywhere.
+func resolveToken(s settings) (token string, bundled bool, ok bool) {
+	if s.APIKey != "" {
+		return s.APIKey, false, true
+	}
+	if defaultReadAccessToken != "" {
+		return defaultReadAccessToken, true, true
+	}
+	return "", false, false
 }
 
 // resolveRef translates a ref this module did not produce into TMDB's own ids.

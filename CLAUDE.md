@@ -72,6 +72,26 @@ README's "honest limits":
   module with a secret setting must therefore echo the secret through the client
   to change any other setting. See the comment on `configureInput`.
 
+## The bundled token
+
+`defaultReadAccessToken` is linked in by the release build with `-ldflags -X`. Four
+rules, and the tests that hold each of them are worth keeping:
+
+- **`resolveToken` is the only function that reads it.** Keep it that way. It is
+  what makes "never written into settings, never rendered, never logged" a
+  property you can verify by reading rather than a claim to trust.
+- **`settings.APIKey` only ever holds the user's own key.** Never populate it
+  from the bundled token as a convenience. `configureModule` replaces the whole
+  settings document, so every control carries one — the bundled token reaching
+  that field would write a shared build-time credential into a user's stored
+  settings the next time they touched any control.
+- **The settings screen describes it, never shows it.** There is nothing for a
+  user to copy, verify or fix, so any rendered fragment is noise at best.
+- **The `linkercheck` gate is not optional.** `-X` on an unresolvable path is
+  silently ignored, so a rename would ship a tokenless binary with no error
+  anywhere. Renaming the variable or moving its package means updating the flag
+  in the release workflow *and* the canary pass in `docker-compose.test.yml`.
+
 ## Two things in here are security-relevant
 
 - **A custom catalog's discover query is free text from a settings screen**, and

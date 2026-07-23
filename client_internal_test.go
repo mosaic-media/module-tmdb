@@ -1,10 +1,14 @@
 package tmdb
 
 import (
+	"context"
+	"encoding/json"
 	"net/url"
 	"reflect"
 	"strings"
 	"testing"
+
+	v1 "github.com/mosaic-media/sdk/contracts/platform/v1"
 )
 
 // Internal tests for the translations that have no observable surface of their
@@ -441,4 +445,152 @@ func mustParseQuery(t *testing.T, query string) url.Values {
 		t.Fatalf("parse %q: %v", query, err)
 	}
 	return parsed
+}
+
+// The bundled read access token. These live in the internal test package
+// because defaultReadAccessToken is set by the linker and is deliberately
+// unexported — nothing outside this package can read it, which is half the
+// point.
+
+// withBundledToken sets the linked-in token for one test and restores it.
+func withBundledToken(t *testing.T, token string) {
+	t.Helper()
+	previous := defaultReadAccessToken
+	defaultReadAccessToken = token
+	t.Cleanup(func() { defaultReadAccessToken = previous })
+}
+
+func TestResolveTokenPrefersTheUsersOwn(t *testing.T) {
+	withBundledToken(t, "bundled.jwt.value")
+
+	// A user's key wins immediately — no flag, no opt-out, no restart.
+	token, bundled, ok := resolveToken(settings{APIKey: "mine"})
+	if !ok || bundled || token != "mine" {
+		t.Fatalf("resolveToken(user) = %q bundled=%v ok=%v", token, bundled, ok)
+	}
+
+	// With none of their own, the bundled one is used and reported as bundled,
+	// so a screen can say which without holding the value.
+	token, bundled, ok = resolveToken(settings{})
+	if !ok || !bundled || token != "bundled.jwt.value" {
+		t.Fatalf("resolveToken(none) = %q bundled=%v ok=%v", token, bundled, ok)
+	}
+}
+
+func TestResolveTokenWithNothingLinkedIn(t *testing.T) {
+	withBundledToken(t, "")
+
+	if _, _, ok := resolveToken(settings{}); ok {
+		t.Fatal("resolved a token with neither a user key nor a bundled one")
+	}
+	// An ordinary `go build` links nothing in, which is the state every test
+	// above this one runs in.
+	if token, _, ok := resolveToken(settings{APIKey: "mine"}); !ok || token != "mine" {
+		t.Fatalf("a user key must still work with no bundled token: %q", token)
+	}
+}
+
+// The requirement that matters: the bundled token is never rendered and never
+// written into the settings document a client round-trips.
+func TestSettingsUINeverEmitsTheBundledToken(t *testing.T) {
+	const bundled = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJib3VuZGxlZCJ9.s3cr3t-signature"
+	withBundledToken(t, bundled)
+	capability := New(nil)
+
+	for _, document := range [][]byte{nil, []byte(`{}`), []byte(`{"apiKey":"user-key-0123"}`)} {
+		resp, err := capability.SettingsUI(context.Background(), v1.SettingsUIRequest{
+			Caller: v1.CallerFromSession("s-1"), Settings: document,
+		})
+		if err != nil {
+			t.Fatalf("SettingsUI(%s): %v", document, err)
+		}
+		screen := string(resp.UI)
+		if strings.Contains(screen, bundled) {
+			t.Fatalf("the bundled token appears in the settings screen for settings %s", document)
+		}
+		// Not even its signature segment, which is the part that would survive a
+		// careless "show the last few characters" helper.
+		if strings.Contains(screen, "s3cr3t-signature") {
+			t.Fatalf("part of the bundled token leaked for settings %s", document)
+		}
+	}
+}
+
+// configureModule replaces the whole settings document, so every control on the
+// screen carries one. If the bundled token ever reached settings.APIKey it would
+// be written into the user's stored settings by the next control they touched —
+// silently turning a shared build-time credential into their configuration.
+func TestTheBundledTokenNeverEntersTheSettingsDocument(t *testing.T) {
+	const bundled = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJib3VuZGxlZCJ9.signature"
+	withBundledToken(t, bundled)
+
+	parsed, err := settingsFrom([]byte(`{"region":"GB"}`))
+	if err != nil {
+		t.Fatalf("settingsFrom: %v", err)
+	}
+	if parsed.APIKey != "" {
+		t.Fatalf("settings.APIKey = %q; it must only ever hold the user's own key", parsed.APIKey)
+	}
+
+	// The action payload every control emits.
+	input := configureInput(parsed)
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), bundled) {
+		t.Fatalf("the bundled token is in a configureModule payload: %s", encoded)
+	}
+	settingsDoc, _ := input["settings"].(map[string]any)
+	if got := settingsDoc["apiKey"]; got != "" {
+		t.Fatalf("apiKey in the emitted document = %v, want empty", got)
+	}
+}
+
+func TestSettingsUISaysWhichKeyIsInUse(t *testing.T) {
+	capability := New(nil)
+	render := func(t *testing.T, document []byte) string {
+		t.Helper()
+		resp, err := capability.SettingsUI(context.Background(), v1.SettingsUIRequest{
+			Caller: v1.CallerFromSession("s-1"), Settings: document,
+		})
+		if err != nil {
+			t.Fatalf("SettingsUI: %v", err)
+		}
+		return string(resp.UI)
+	}
+
+	t.Run("bundled key, none of the user's own", func(t *testing.T) {
+		withBundledToken(t, "eyJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.sig")
+		screen := render(t, nil)
+		// A user with working metadata and no key of their own must not see a
+		// screen that reads as broken.
+		if !strings.Contains(screen, "Bundled key in use") {
+			t.Fatalf("no indication the bundled key is in use: %s", screen)
+		}
+		if strings.Contains(screen, "do nothing until a key is set") {
+			t.Fatal("the screen warns metadata is dead while the bundled key is working")
+		}
+	})
+
+	t.Run("no key at all", func(t *testing.T) {
+		withBundledToken(t, "")
+		screen := render(t, nil)
+		if !strings.Contains(screen, "do nothing until a key is set") {
+			t.Fatalf("no warning with no credential at all: %s", screen)
+		}
+	})
+
+	t.Run("the user's own key", func(t *testing.T) {
+		withBundledToken(t, "eyJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.sig")
+		screen := render(t, []byte(`{"apiKey":"0123456789abcdef0123456789abcdef"}`))
+		if !strings.Contains(screen, "Your own key is in use") {
+			t.Fatalf("does not say the user's key won: %s", screen)
+		}
+		// Clearing it is not destructive when there is something to fall back to,
+		// and the screen should say so rather than implying it breaks metadata.
+		if !strings.Contains(screen, "falls back to the key bundled with Mosaic") {
+			t.Fatalf("does not explain what clearing does: %s", screen)
+		}
+	})
 }

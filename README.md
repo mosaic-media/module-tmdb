@@ -78,11 +78,27 @@ User-managed opaque JSON ([ADR 0021](https://github.com/mosaic-media/architectur
 }
 ```
 
-`apiKey` accepts **either** a v3 API key or a v4 read access token — a user copying from their TMDB account page has no reason to know which one Mosaic wants, so the credential's shape decides where it is sent.
+`apiKey` accepts **either** a v3 API key or a v4 read access token — a user copying from their TMDB account page has no reason to know which one Mosaic wants, so the credential's shape decides where it is sent. It is optional: see the bundled token below.
 
 `region` decides three things beyond which release dates apply: it is the country whose **age certification** is reported, the country whose **watch providers** are listed, and in both cases an unset region means **no claim at all** rather than a substitute. A US "R" shown to a household that set `GB` is not a conservative approximation — it is a different scale reported as if it were theirs.
 
 `catalogs` are raw `/discover` parameters, deliberately. A filter builder would model every parameter TMDB has and go stale the moment it added one; a raw query is a power-user surface that reaches all of `/discover`. Queries are **sanitised before use** — `api_key`, `page`, `language` and `include_adult` are stripped, so a query cannot replace the credential the module sends or fight its paging.
+
+## The bundled token
+
+Mosaic's release build links a TMDB **API Read Access Token** into the binary, so a deployment has working metadata before anyone configures anything:
+
+```bash
+go build -ldflags "-X github.com/mosaic-media/module-tmdb.defaultReadAccessToken=$TMDB_RAC" ./cmd/mosaic-platform
+```
+
+A user's own key always wins — set one and it takes over immediately, no flag and no restart; clear it and the bundled token resumes. `resolveToken` is the only function that reads it, which is what keeps the separation checkable by reading rather than by trust: `settings.APIKey` holds the user's key and nothing else, everywhere.
+
+**It is never rendered, never written into the settings document, and never logged.** That last one matters more than it looks: `configureModule` replaces the whole settings document, so every control on the settings screen carries one — if the bundled token ever reached `settings.APIKey` it would be written into the user's stored settings by the next control they touched, silently turning a shared build-time credential into their configuration. Two tests hold that line.
+
+**It is not a secret once the binary ships.** A string linked into a distributed binary comes back out with `strings`. This is a *shared* credential whose exposure is accepted, not a hidden one. What makes that acceptable is what it can do — read-only, TMDB's public catalogue, centrally revocable. What it costs is a shared rate limit and a single point of failure across every deployment that has not set its own, which is exactly why the override exists and why the settings screen says which key is in use.
+
+**`-X` on a path that does not resolve is silently ignored**, so a rename would ship a binary with no token and no error anywhere. The container gate runs a second pass under the `linkercheck` build tag that links a canary through the same symbol path and fails if it does not arrive.
 
 ## The honest limits
 

@@ -59,19 +59,25 @@ type Client struct {
 // NewClient builds a client over an HTTP client and a resolved settings value.
 // The Platform's own client is passed in rather than built here: it carries the
 // netguard dial guard and the outbound telemetry seam (ADR 0055).
-func NewClient(httpClient *http.Client, s settings, images imageConfig) *Client {
+// The token is passed in rather than read from s.APIKey, because the credential
+// in use is not always the user's: it may be the one linked in at build time.
+// Only resolveToken decides which, and settings.APIKey holds the user's key and
+// nothing else — see defaultReadAccessToken for why that separation is load
+// bearing.
+func NewClient(httpClient *http.Client, s settings, token string, images imageConfig) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
 	return &Client{
 		http:  httpClient,
-		token: s.APIKey,
+		token: token,
 		// TMDB has two credentials for the same endpoints: a v3 API key (a bare
 		// hex string, sent as a query parameter) and a v4 read access token (a
 		// JWT, sent as a bearer header). A user copying from TMDB's settings page
 		// may arrive with either and has no reason to know which Mosaic wants, so
-		// the shape decides rather than the user.
-		bearer:   isBearerToken(s.APIKey),
+		// the shape decides rather than the user. The bundled token is a v4 read
+		// access token and takes the same path.
+		bearer:   isBearerToken(token),
 		language: s.Language,
 		region:   s.Region,
 		adult:    s.IncludeAdult,
@@ -147,7 +153,11 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 
 		case resp.StatusCode == http.StatusUnauthorized:
 			resp.Body.Close()
-			return errNoAPIKey
+			// Distinct from "no credential": something *was* sent and TMDB
+			// refused it. Reporting that as "not set" would point a user at an
+			// empty field that is not empty — and with a bundled token in play,
+			// at a field they never filled in.
+			return errCredentialRejected
 
 		default:
 			msg := statusMessage(resp)

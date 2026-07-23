@@ -56,6 +56,14 @@ services:
         go build ./...
         go vet ./...
         go test ./...
+        # The release build links a TMDB read access token in with -X. A -X path
+        # that no longer resolves is silently ignored, so the binary would ship
+        # with no token and fail only at a user's install. This pass proves the
+        # symbol path still resolves, using the same path the release workflow
+        # uses.
+        go test -tags linkercheck \
+          -ldflags "-X github.com/mosaic-media/module-tmdb.defaultReadAccessToken=linker-injection-canary" \
+          -run TestLinkerInjectionPathResolves ./...
 
 volumes:
   mosaic-tmdb-gomod:

@@ -91,16 +91,32 @@ func apiKeySection(s settings) *ui.Element {
 		ui.Prop("submitLabel", "Save"),
 		ui.OnTap(ui.Invoke("configureModule", configureInput(pending))))
 
+	// Three states, and the middle one is the reason this section is not a
+	// one-liner: a user with no key of their own may still have working metadata,
+	// and a screen that showed an empty field would read as broken.
 	if s.APIKey == "" {
+		if defaultReadAccessToken == "" {
+			return ui.Section("API key",
+				ui.Banner("TMDB has no anonymous access, so metadata and search do nothing until a key is set. Create a free account at themoviedb.org, then copy the API Read Access Token from Settings › API.", ui.ToneWarning),
+				field)
+		}
+		// The bundled token is described, never shown. It is not this user's
+		// credential and there is nothing for them to copy, verify or fix — so
+		// rendering any part of it would be noise at best.
 		return ui.Section("API key",
-			ui.Banner("TMDB has no anonymous access, so metadata and search do nothing until a key is set. Create a free account at themoviedb.org, then copy the API key from Settings › API.", ui.ToneWarning),
+			ui.Banner("Using the read access token bundled with Mosaic, so metadata works without any setup. Add your own below if you would rather not share its rate limit — yours will take over immediately.", ui.ToneSuccess),
+			statusRow(ui.Badge("Bundled key in use", ui.ToneSuccess)),
 			field)
 	}
 
 	cleared := s
 	cleared.APIKey = ""
+	revert := "Clearing it stops TMDB working until you add another."
+	if defaultReadAccessToken != "" {
+		revert = "Clearing it falls back to the key bundled with Mosaic."
+	}
 	return ui.Section("API key",
-		ui.Banner("A key is configured. Saving a new one replaces it.", ui.ToneSuccess),
+		ui.Banner("Your own key is in use. Saving a new one replaces it. "+revert, ui.ToneSuccess),
 		statusRow(
 			ui.Badge(maskKey(s.APIKey), ui.ToneNeutral),
 			ui.Badge(keyKindLabel(s.APIKey), ui.ToneInfo),
