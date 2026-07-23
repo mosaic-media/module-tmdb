@@ -1,0 +1,62 @@
+# The TMDB module's test container.
+#
+#   docker compose -f docker-compose.test.yml run --rm test
+#
+# This is the sanctioned way to run this repository's gates. Nothing is built
+# or tested on the host.
+#
+# What this container is asserting that a host run does not:
+#
+#   - **The boundary.** This module compiles against the published SDK, the
+#     published SDUI contract and the standard library, and nothing else, which
+#     boundary_test.go enforces by parsing every import. A host with a populated
+#     module cache, a leftover go.work or a stray `replace` can satisfy an import
+#     that a clean machine could not, and the boundary test still passes because
+#     the import resolved. That matters more here than in an extension module:
+#     this one is compiled into the Platform binary and shares its dependency
+#     graph with every other core module (ADR 0062).
+#
+# Unlike the Stremio module's container, this one needs **no** outbound network.
+# TMDB requires an API key, so there is no credential a test could hold that is
+# not somebody's — the tests run against a hermetic fake over httptest, and the
+# thing worth checking against the real API is a key a person has, in a running
+# dev stack, not in CI.
+#
+# For a shell in the same environment:
+#
+#   docker compose -f docker-compose.test.yml run --rm test bash
+name: mosaic-tmdb-test
+
+services:
+  test:
+    # Pinned to go.mod's `go` directive. Bump both together.
+    image: golang:1.25-bookworm
+    working_dir: /src/module-tmdb
+    environment:
+      # The bind mount carries a .git the container has no business stat-ing,
+      # and Go fails the build on its ownership rather than degrading.
+      GOFLAGS: -buildvcs=false
+    volumes:
+      - .:/src/module-tmdb
+      - mosaic-tmdb-gomod:/go/pkg/mod
+      - mosaic-tmdb-gobuild:/root/.cache/go-build
+    command:
+      - bash
+      - -eu
+      - -o
+      - pipefail
+      - -c
+      - |
+        gofmt -l . > /tmp/unformatted
+        if [ -s /tmp/unformatted ]; then
+          echo "These files are not gofmt-clean:" >&2
+          cat /tmp/unformatted >&2
+          exit 1
+        fi
+        go build ./...
+        go vet ./...
+        go test ./...
+
+volumes:
+  mosaic-tmdb-gomod:
+  mosaic-tmdb-gobuild:
