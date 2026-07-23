@@ -307,7 +307,10 @@ func (c *Client) Detail(ctx context.Context, nativeType, id string) (Title, erro
 // rating lives in `release_dates` (per country, per release), a series' in
 // `content_ratings` (per country, flat).
 func appendFor(nativeType string) string {
-	common := "credits,images,external_ids,keywords,recommendations,videos"
+	// "watch/providers" carries a slash, which is how TMDB names that sub-request
+	// and also how it keys the result — it is not a typo and must not be
+	// "normalised" to an underscore.
+	common := "credits,images,external_ids,keywords,recommendations,videos,watch/providers"
 	if nativeType == typeTV {
 		return common + ",content_ratings"
 	}
@@ -456,6 +459,25 @@ type Title struct {
 	Episodes []Episode
 	// Collection is the franchise a film belongs to, nil otherwise.
 	Collection *Collection
+	// Watch is where the title can be streamed, rented or bought in the
+	// configured region — nil when no region is set or TMDB knows of nothing
+	// there. It describes availability *elsewhere* and is never a source.
+	Watch *WatchAvailability
+}
+
+// WatchAvailability is one region's streaming availability.
+type WatchAvailability struct {
+	Region      string
+	Link        string
+	Attribution string
+	Offers      []WatchOffer
+}
+
+// WatchOffer is one service the title is on, and on what terms.
+type WatchOffer struct {
+	Provider string
+	Logo     string
+	Type     string
 }
 
 // Collection is a franchise and its members.
@@ -577,6 +599,30 @@ type rawTitle struct {
 	ContentRatings struct {
 		Results []rawContentRating `json:"results"`
 	} `json:"content_ratings"`
+	// Keyed by ISO 3166-1 country code. TMDB returns every region it knows, which
+	// for a well-distributed film is over a hundred; only the configured one is
+	// read.
+	WatchProviders struct {
+		Results map[string]rawWatchRegion `json:"results"`
+	} `json:"watch/providers"`
+}
+
+// rawWatchRegion is one country's availability. TMDB splits the offers by how
+// you get the title rather than tagging each one, so the offer type is the field
+// name and has to be recovered from it.
+type rawWatchRegion struct {
+	Link     string             `json:"link"`
+	Flatrate []rawWatchProvider `json:"flatrate"`
+	Free     []rawWatchProvider `json:"free"`
+	Ads      []rawWatchProvider `json:"ads"`
+	Rent     []rawWatchProvider `json:"rent"`
+	Buy      []rawWatchProvider `json:"buy"`
+}
+
+type rawWatchProvider struct {
+	ProviderName    string `json:"provider_name"`
+	LogoPath        string `json:"logo_path"`
+	DisplayPriority int    `json:"display_priority"`
 }
 
 type rawSeasonSummary struct {
@@ -707,6 +753,7 @@ func (c *Client) title(r rawTitle, nativeType string) Title {
 		Cast:          credits,
 		Trailers:      trailersOf(r.Videos.Results),
 		Similar:       similar,
+		Watch:         c.watchOf(r),
 	}
 	// TVDB reports television only, and TMDB renders "no id" as 0 rather than by
 	// omitting the field.
@@ -767,6 +814,83 @@ func (c *Client) certificationOf(r rawTitle, nativeType string) string {
 		}
 	}
 	return ""
+}
+
+// justWatchAttribution is who compiles TMDB's availability data. TMDB's terms
+// require crediting them wherever it is shown, which is why it travels in the
+// value rather than being something a screen has to remember.
+const justWatchAttribution = "JustWatch"
+
+// watchOf reads the configured region's availability.
+//
+// It is region-exact for the same reason the certification is: availability
+// differs entirely by country, and showing a viewer in Britain that something is
+// on a service that carries it only in the United States is worse than showing
+// nothing. No region configured means no claim — TMDB returns over a hundred
+// regions for a well-distributed film and picking one would be inventing an
+// answer.
+func (c *Client) watchOf(r rawTitle) *WatchAvailability {
+	if c.region == "" {
+		return nil
+	}
+	region, ok := r.WatchProviders.Results[strings.ToUpper(c.region)]
+	if !ok {
+		return nil
+	}
+
+	// TMDB groups offers by how you get the title rather than tagging each one,
+	// so the type is recovered from which list the entry came out of. The order
+	// here is the order they are presented in: what a viewer may already pay for
+	// first, what costs money now last.
+	groups := []struct {
+		offerType string
+		providers []rawWatchProvider
+	}{
+		{"subscription", region.Flatrate},
+		{"free", region.Free},
+		{"ads", region.Ads},
+		{"rent", region.Rent},
+		{"buy", region.Buy},
+	}
+
+	var offers []WatchOffer
+	seen := make(map[string]bool)
+	for _, group := range groups {
+		providers := append([]rawWatchProvider(nil), group.providers...)
+		sort.SliceStable(providers, func(i, j int) bool {
+			return providers[i].DisplayPriority < providers[j].DisplayPriority
+		})
+		for _, p := range providers {
+			if p.ProviderName == "" {
+				continue
+			}
+			// A service commonly appears under several types — rent *and* buy is
+			// the norm. The first is the best terms on offer, since the groups are
+			// ordered that way, so a later duplicate adds nothing a viewer needs.
+			if seen[p.ProviderName] {
+				continue
+			}
+			seen[p.ProviderName] = true
+			offers = append(offers, WatchOffer{
+				Provider: p.ProviderName,
+				Logo:     c.imageURL(p.LogoPath, c.images.logo),
+				Type:     group.offerType,
+			})
+		}
+	}
+
+	// A region entry with a link but no offers is real — TMDB has a page for the
+	// title, nothing carries it there. That is worth returning: it is "none known
+	// here", which is not the same as having no answer at all.
+	if len(offers) == 0 && region.Link == "" {
+		return nil
+	}
+	return &WatchAvailability{
+		Region:      strings.ToUpper(c.region),
+		Link:        region.Link,
+		Attribution: justWatchAttribution,
+		Offers:      offers,
+	}
 }
 
 // trailersOf keeps the promotional videos, dropping the featurettes, clips and

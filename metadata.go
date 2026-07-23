@@ -62,8 +62,31 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		Trailers:      trailersFrom(title.Trailers),
 		Similar:       relatedFrom(title.Similar),
 		Collection:    collectionFrom(title.Collection),
+		Watch:         watchFrom(title.Watch),
 		Episodes:      episodesOf(title.Episodes),
 	}, nil
+}
+
+// watchFrom maps streaming availability onto the SDK's projection. It is the one
+// field here that describes something *outside* Mosaic, and the attribution
+// travels with it because the upstream's terms require it to be shown wherever
+// the offers are.
+func watchFrom(watch *WatchAvailability) *v1.WatchAvailability {
+	if watch == nil {
+		return nil
+	}
+	offers := make([]v1.WatchOffer, 0, len(watch.Offers))
+	for _, o := range watch.Offers {
+		offers = append(offers, v1.WatchOffer{
+			Provider: o.Provider, Logo: o.Logo, Type: v1.WatchOfferType(o.Type),
+		})
+	}
+	return &v1.WatchAvailability{
+		Region:      watch.Region,
+		Link:        watch.Link,
+		Attribution: watch.Attribution,
+		Offers:      offers,
+	}
 }
 
 // relatedFrom maps previews onto the SDK's RelatedItem. InLibrary and NodeID are

@@ -20,10 +20,15 @@
 //   - RoleMetadata — full descriptive detail for a ref: overview, genres,
 //     keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**,
 //     billed cast with character names and headshots, trailers, related titles,
-//     the franchise a film belongs to, and for a series a per-episode preview
-//     with stills. The logo, the cast photographs, the franchise and the related
-//     titles are all things a Stremio meta addon structurally cannot supply
-//     (ADR 0034's recorded gaps).
+//     the franchise a film belongs to, where it can be streamed, rented or
+//     bought, and for a series a per-episode preview with stills. The logo, the
+//     cast photographs, the franchise and the related titles are all things a
+//     Stremio meta addon structurally cannot supply (ADR 0034's recorded gaps).
+//
+//     Watch availability is the one field here that describes something
+//     *outside* Mosaic. It is not a source: no offer becomes a Part, none is
+//     playable through the Platform, and a consumer must render it
+//     informationally rather than as a play control.
 //   - RoleSearch — free-text search over film and television, the other half of
 //     the capability class ADR 0035 requires. Without it nothing can produce a
 //     ref this module's metadata role would answer for, so the two ship together

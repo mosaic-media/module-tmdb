@@ -41,14 +41,23 @@ a stream or subtitle role.** TMDB describes content; it does not host or index
 it. A meta-only import — Works and trees with no Parts — is the correct and
 complete outcome, not a degraded one.
 
+**Watch providers are the sharpest edge of that rule.** `ContentMetadata.Watch`
+names services a title streams on, and it is the one field in this module that
+looks like a source and is not. It must never become a `Part`, never become a
+source binding, and never be rendered as a play control — Mosaic cannot play a
+Netflix listing, and an affordance that suggests otherwise is a promise the
+Platform cannot keep. There is a test asserting an import with availability
+attaches no Parts and binds no unexpected provider; keep it.
+
 ## Modules are the forcing function for the SDK
 
 When something cannot be expressed, that is a **finding**, not an obstacle to
 work around. Take it to the SDK as an additive `v0.x` bump, or record it in the
 roadmap as an open gap. **Do not simulate the missing surface locally.** This
-module has already forced one bump — SDK `v0.17.0` added `Keywords`,
-`Certification`, `Similar`, `Collection` and `Trailers` because TMDB returns all
-five and there was nowhere to put them. Three remain open, all written up in the
+module has already forced two bumps — SDK `v0.17.0` added `Keywords`,
+`Certification`, `Similar`, `Collection` and `Trailers`, and `v0.18.0` added
+`Watch`, all because TMDB returns the data and there was nowhere to put it.
+Three remain open, all written up in the
 README's "honest limits":
 
 - **No relation read.** `RelateContent` can write a `RelationCollectionMember`
@@ -72,7 +81,12 @@ README's "honest limits":
   list's inverse — add to `reservedDiscoverParams`, never remove.
 - **`Certification` is region-exact or empty.** Never fall back to another
   country's rating. Empty means unknown, and a consumer must not read it as
-  permissive.
+  permissive. **Watch providers follow the same rule** for the same reason:
+  availability is national, and a substitute is a wrong answer rather than a
+  partial one.
+- **The watch data is JustWatch's, and TMDB's terms require crediting them**
+  wherever it is shown. The credit travels in `WatchAvailability.Attribution`
+  rather than living in a screen, so do not drop it when mapping.
 
 ## Everything runs in the container, nothing runs on the host
 
@@ -101,7 +115,7 @@ The Platform requires this at a **tagged version with no `replace`** — a
 pushed, then the Platform's `go.mod` require is bumped to match.
 
 ```bash
-git tag v0.2.0 && git push origin main && git push origin v0.2.0
+git tag v0.3.0 && git push origin main && git push origin v0.3.0
 ```
 
 The module reports the version that was **actually linked**, via

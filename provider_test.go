@@ -572,3 +572,151 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// Watch providers: where a title can be seen *outside* Mosaic. The tests lean on
+// the two properties that make it different from every other read field — it is
+// region-exact, and it is not a source.
+
+func TestWatchProvidersAreRegionExact(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	if meta.Watch == nil {
+		t.Fatal("no watch availability for a region TMDB has offers in")
+	}
+	if meta.Watch.Region != "GB" {
+		t.Fatalf("region = %q, want the configured GB", meta.Watch.Region)
+	}
+	if !strings.Contains(meta.Watch.Link, "locale=GB") {
+		t.Fatalf("link = %q, want the GB page", meta.Watch.Link)
+	}
+	// TMDB's availability data is JustWatch's, and the terms require crediting
+	// them wherever it is shown — so it travels in the value rather than being
+	// something a screen has to remember.
+	if meta.Watch.Attribution != "JustWatch" {
+		t.Errorf("attribution = %q", meta.Watch.Attribution)
+	}
+
+	// Subscription first — what a viewer may already pay for, before what costs
+	// money now — and within that, the source's own display priority.
+	if len(meta.Watch.Offers) != 3 {
+		t.Fatalf("offers = %+v, want 3 distinct services", meta.Watch.Offers)
+	}
+	if meta.Watch.Offers[0].Provider != "Prime Video" || meta.Watch.Offers[0].Type != v1.WatchSubscription {
+		t.Errorf("first offer = %+v, want Prime Video on subscription (display_priority 0)", meta.Watch.Offers[0])
+	}
+	if meta.Watch.Offers[1].Provider != "Netflix" || meta.Watch.Offers[1].Type != v1.WatchSubscription {
+		t.Errorf("second offer = %+v, want Netflix on subscription", meta.Watch.Offers[1])
+	}
+	// Netflix is also listed for rent. The better terms won and it appears once.
+	if meta.Watch.Offers[2].Provider != "Apple TV" || meta.Watch.Offers[2].Type != v1.WatchRent {
+		t.Errorf("third offer = %+v, want Apple TV to rent", meta.Watch.Offers[2])
+	}
+	if meta.Watch.Offers[0].Logo == "" {
+		t.Error("no provider logo; a service row is a logo row")
+	}
+
+	// A different region is a different answer, not a translated one.
+	us, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"US"}`),
+	})
+	if err != nil {
+		t.Fatalf("Metadata (US): %v", err)
+	}
+	if us.Watch == nil || len(us.Watch.Offers) != 1 || us.Watch.Offers[0].Provider != "Max" {
+		t.Fatalf("US offers = %+v, want only Max", us.Watch)
+	}
+}
+
+func TestWatchProvidersWithoutARegionMakeNoClaim(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	// TMDB returns over a hundred regions for a well-distributed film. Picking
+	// one because none was configured would be inventing an answer, and telling a
+	// viewer in Britain that something is on a service carrying it only in the
+	// United States is worse than telling them nothing.
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if meta.Watch != nil {
+		t.Fatalf("watch = %+v with no region configured, want nil", meta.Watch)
+	}
+}
+
+func TestARegionWithNoOffersIsStillAnAnswer(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	// "None known here" is a different fact from "no data", and a detail screen
+	// renders them differently.
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"IE"}`),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if meta.Watch == nil {
+		t.Fatal("a region with a link but no offers returned nil; that erases 'none known here'")
+	}
+	if len(meta.Watch.Offers) != 0 {
+		t.Fatalf("offers = %+v, want none", meta.Watch.Offers)
+	}
+	if meta.Watch.Link == "" {
+		t.Error("no link, so there is nothing an informational control could open")
+	}
+
+	// A region TMDB does not report at all is nil, not an empty shell.
+	absent, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"JP"}`),
+	})
+	if err != nil {
+		t.Fatalf("Metadata (JP): %v", err)
+	}
+	if absent.Watch != nil {
+		t.Fatalf("watch = %+v for an unreported region, want nil", absent.Watch)
+	}
+}
+
+// The boundary that matters most: availability is not a source. An offer must
+// never become something the Platform thinks it can play.
+func TestWatchProvidersNeverBecomeParts(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	result, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Parts != 0 || len(content.parts) != 0 {
+		t.Fatalf("import attached %d parts; a watch offer is not a playable location", len(content.parts))
+	}
+	// Nor a source binding: Mosaic cannot source anything from Netflix.
+	for _, b := range content.binds {
+		if b.SourceProvider != "tmdb" && b.SourceProvider != "imdb" && b.SourceProvider != "tvdb" {
+			t.Errorf("unexpected binding %q; watch providers must not be bound as sources", b.SourceProvider)
+		}
+	}
+}

@@ -119,6 +119,33 @@ func fakeTMDB() *httptest.Server {
 					map[string]any{"certification": "15"},
 				}},
 			}},
+			// TMDB keys availability by country and splits offers by how you get
+			// the title rather than tagging each one. The slash in the key is
+			// TMDB's, not a typo.
+			"watch/providers": map[string]any{"results": map[string]any{
+				"GB": map[string]any{
+					"link": "https://www.themoviedb.org/movie/335984/watch?locale=GB",
+					"flatrate": []any{
+						map[string]any{"provider_name": "Netflix", "logo_path": "/netflix.jpg", "display_priority": 1},
+						map[string]any{"provider_name": "Prime Video", "logo_path": "/prime.jpg", "display_priority": 0},
+					},
+					// A service commonly appears under several types; the better
+					// terms should win and the duplicate should not be shown twice.
+					"rent": []any{
+						map[string]any{"provider_name": "Apple TV", "logo_path": "/apple.jpg", "display_priority": 0},
+						map[string]any{"provider_name": "Netflix", "logo_path": "/netflix.jpg", "display_priority": 5},
+					},
+					"buy": []any{
+						map[string]any{"provider_name": "Apple TV", "logo_path": "/apple.jpg", "display_priority": 0},
+					},
+				},
+				"US": map[string]any{
+					"link":     "https://www.themoviedb.org/movie/335984/watch?locale=US",
+					"flatrate": []any{map[string]any{"provider_name": "Max", "logo_path": "/max.jpg"}},
+				},
+				// A region TMDB has a page for but nothing carries the title in.
+				"IE": map[string]any{"link": "https://www.themoviedb.org/movie/335984/watch?locale=IE"},
+			}},
 		})
 	})
 

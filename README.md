@@ -17,7 +17,7 @@ It also closes two gaps that were recorded rather than invented ([ADR 0034](http
 
 | Role | What it does |
 |---|---|
-| `RoleMetadata` | Full detail for a ref — overview, genres, keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**, billed cast with characters and headshots, trailers, related titles, the franchise a film belongs to, and for a series a per-episode preview with stills. |
+| `RoleMetadata` | Full detail for a ref — overview, genres, keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**, billed cast with characters and headshots, trailers, related titles, the franchise a film belongs to, **where it can be streamed, rented or bought**, and for a series a per-episode preview with stills. |
 | `RoleSearch` | Free-text search over film and television, plus a reverse lookup from an IMDb id. It ships with metadata rather than as an extra: nothing else can produce a ref this module's metadata role would answer for, and ADR 0035 makes the two one required capability class. |
 | `RoleCatalog` | Trending, popular, top-rated and in-cinemas/on-air, **plus any `/discover` query the user defines** — "French thrillers, rated above seven" becomes a browsable catalog like any other. |
 | `RoleSettingsUI` | The API key form, locale, and the custom-catalog editor ([ADR 0038](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0038-module-contributed-settings-ui.md)). |
@@ -28,9 +28,19 @@ A ref whose native id is an IMDb id — which is every ref from Cinemeta or a St
 
 It does **not** decide that TMDB *should* answer for another module's ref. Which provider wins is the open precedence seam ADR 0035 named, and it belongs to the Platform. This only makes the module capable of answering when asked.
 
+### Watch providers
+
+A detail carries where the title can be watched **outside Mosaic** — the services that stream it on subscription, or rent or sell it. Three things about that are load-bearing:
+
+- **An offer is not a source.** It never becomes a `Part`, it is never bound as a source binding, and nothing in it is playable through the Platform. A client that renders an offer as a play control is making a promise the Platform cannot keep; the right affordance is informational, and `Link` is where it should send the viewer.
+- **It is region-exact, or absent.** Availability differs entirely by country. With no `region` set the module returns nothing rather than picking one of the hundred-odd TMDB reports — telling a viewer in Britain that something is on a service carrying it only in the US is worse than telling them nothing. Empty offers *with* a link is a real answer meaning "none known here", which is not the same as no data.
+- **It carries its attribution.** TMDB's availability data is compiled by **JustWatch**, and TMDB's terms require crediting them wherever it is shown. The credit travels in the value rather than being something a screen has to remember, so any consumer that renders offers has it to hand.
+
+A service listed under several terms — rent *and* buy is the norm — appears once, under the best terms available, because the groups are read subscription-first.
+
 ### The endpoints it uses
 
-`/search/multi`, `/find/{imdb_id}`, `/movie/{id}` and `/tv/{id}` (with `credits`, `images`, `external_ids`, `keywords`, `recommendations`, `videos` and certifications folded in by `append_to_response`), `/tv/{id}/season/{n}`, `/collection/{id}`, `/configuration`, the eight built-in list endpoints, and `/discover/{movie,tv}`.
+`/search/multi`, `/find/{imdb_id}`, `/movie/{id}` and `/tv/{id}` (with `credits`, `images`, `external_ids`, `keywords`, `recommendations`, `videos`, `watch/providers` and certifications folded in by `append_to_response`), `/tv/{id}/season/{n}`, `/collection/{id}`, `/configuration`, the eight built-in list endpoints, and `/discover/{movie,tv}`.
 
 A **film detail is one request**; a **series detail is one per season**, because TMDB has no endpoint returning a show's whole episode list; a film in a franchise costs one more. There is no cache, so a detail screen re-fetches on every render — the same trade the roadmap already records for the metadata path generally, and a durable metadata cache is the named follow-up.
 
@@ -54,7 +64,7 @@ User-managed opaque JSON ([ADR 0021](https://github.com/mosaic-media/architectur
 
 `apiKey` accepts **either** a v3 API key or a v4 read access token — a user copying from their TMDB account page has no reason to know which one Mosaic wants, so the credential's shape decides where it is sent.
 
-`region` decides two things beyond which release dates apply: it is the country whose **age certification** is reported, and an unset region means **no certification at all** rather than a substitute. A US "R" shown to a household that set `GB` is not a conservative approximation — it is a different scale reported as if it were theirs.
+`region` decides three things beyond which release dates apply: it is the country whose **age certification** is reported, the country whose **watch providers** are listed, and in both cases an unset region means **no claim at all** rather than a substitute. A US "R" shown to a household that set `GB` is not a conservative approximation — it is a different scale reported as if it were theirs.
 
 `catalogs` are raw `/discover` parameters, deliberately. A filter builder would model every parameter TMDB has and go stale the moment it added one; a raw query is a power-user surface that reaches all of `/discover`. Queries are **sanitised before use** — `api_key`, `page`, `language` and `include_adult` are stripped, so a query cannot replace the credential the module sends or fight its paging.
 
@@ -72,7 +82,7 @@ Recorded rather than papered over.
 
 **Changing any setting echoes the API key through the client.** `configureModule` replaces the settings document wholesale — ADR 0021 has no partial update — so a control that sets a language must carry the key or erase it. The key therefore appears inside this screen's action payloads, reaching only an admin who passed `module.configure` but bypassing the Platform's redaction classes ([ADR 0056](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0056-redaction-classes-are-the-pii-boundary.md)), which cannot see inside an opaque module document. It is never *rendered* — the screen shows the last four characters. The fix is an SDK change: a merge semantic on `configureModule`, or a write-only settings field.
 
-**Deliberately absent.** Watch providers (it reports what is on Netflix in your region — off-mission for a library that resolves its own sources), the person endpoints (a cast chip opening "more from this actor" needs a node kind for a person, which is a design question rather than an endpoint), alternative titles (matters for matching local files; waits on a local-media module), and `/movie/changes` (would drive incremental refresh; waits on the jobs runner, scheduler and system principal).
+**Deliberately absent.** The person endpoints (a cast chip opening "more from this actor" needs a node kind for a person, which is a design question rather than an endpoint), alternative titles (matters for matching local files; waits on a local-media module), and `/movie/changes` (would drive incremental refresh; waits on the jobs runner, scheduler and system principal).
 
 ## Build and test
 
