@@ -17,12 +17,17 @@ import (
 // (ADR 0034) that no addon protocol carries, and they are why a metadata module
 // was worth building rather than configuring another addon.
 func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.ContentMetadata, error) {
-	client, err := c.clientFrom(req.Settings)
+	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
 		return v1.ContentMetadata{}, err
 	}
 
-	title, err := client.Detail(ctx, req.Ref.NativeType, req.Ref.NativeID)
+	nativeID, nativeType, err := client.resolveRef(ctx, req.Ref)
+	if err != nil {
+		return v1.ContentMetadata{}, err
+	}
+
+	title, err := client.Detail(ctx, nativeType, nativeID)
 	if err != nil {
 		return v1.ContentMetadata{}, fmt.Errorf("fetch TMDB detail: %w", err)
 	}
@@ -41,19 +46,70 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		v1.Int("episodes", len(title.Episodes)))
 
 	return v1.ContentMetadata{
-		Ref:      req.Ref,
-		Title:    title.Title,
-		Year:     title.Year,
-		Overview: title.Overview,
-		Poster:   title.Poster,
-		Backdrop: title.Backdrop,
-		Logo:     title.Logo,
-		Genres:   title.Genres,
-		Rating:   title.Rating,
-		Runtime:  title.Runtime,
-		Cast:     castOf(title.Cast),
-		Episodes: episodesOf(title.Episodes),
+		Ref:           req.Ref,
+		Title:         title.Title,
+		Year:          title.Year,
+		Overview:      title.Overview,
+		Poster:        title.Poster,
+		Backdrop:      title.Backdrop,
+		Logo:          title.Logo,
+		Genres:        title.Genres,
+		Keywords:      title.Keywords,
+		Certification: title.Certification,
+		Rating:        title.Rating,
+		Runtime:       title.Runtime,
+		Cast:          castOf(title.Cast),
+		Trailers:      trailersFrom(title.Trailers),
+		Similar:       relatedFrom(title.Similar),
+		Collection:    collectionFrom(title.Collection),
+		Episodes:      episodesOf(title.Episodes),
 	}, nil
+}
+
+// relatedFrom maps previews onto the SDK's RelatedItem. InLibrary and NodeID are
+// left zero: unioning a virtual list against the library is the Platform's job,
+// not a provider's (ADR 0028).
+func relatedFrom(previews []Preview) []v1.RelatedItem {
+	if len(previews) == 0 {
+		return nil
+	}
+	out := make([]v1.RelatedItem, 0, len(previews))
+	for _, p := range previews {
+		out = append(out, v1.RelatedItem{
+			Ref: refFrom(p), Title: p.Title, Year: p.Year, Poster: p.Poster,
+		})
+	}
+	return out
+}
+
+// collectionFrom maps a franchise onto the SDK's descriptive projection. Nil
+// stays nil — "belongs to no franchise" and "an empty franchise" are different
+// facts and a consumer renders them differently.
+func collectionFrom(collection *Collection) *v1.Collection {
+	if collection == nil {
+		return nil
+	}
+	return &v1.Collection{
+		Name:     collection.Name,
+		Overview: collection.Overview,
+		Poster:   collection.Poster,
+		Backdrop: collection.Backdrop,
+		Items:    relatedFrom(collection.Items),
+	}
+}
+
+// trailersFrom maps promotional videos onto the SDK's Trailer, which carries a
+// site and that site's key rather than a URL — building a watch or embed URL is
+// the client's decision, not this module's.
+func trailersFrom(trailers []Trailer) []v1.Trailer {
+	if len(trailers) == 0 {
+		return nil
+	}
+	out := make([]v1.Trailer, 0, len(trailers))
+	for _, t := range trailers {
+		out = append(out, v1.Trailer{Name: t.Name, Site: t.Site, Key: t.Key, Official: t.Official})
+	}
+	return out
 }
 
 // castOf maps billed credits onto the SDK's Person. Unlike an addon that carries

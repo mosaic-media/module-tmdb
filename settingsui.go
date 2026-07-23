@@ -31,6 +31,7 @@ func (c *Capability) SettingsUI(ctx context.Context, req v1.SettingsUIRequest) (
 		apiKeySection(s),
 		localeSection(s),
 		contentSection(s),
+		catalogSection(s),
 		attributionSection(),
 	}
 	screen := ui.Screen(ui.Title("TMDB"), ui.Group(body...))
@@ -62,6 +63,10 @@ func (c *Capability) SettingsUI(ctx context.Context, req v1.SettingsUIRequest) (
 // control ever carries it — buys the property by removing the features, and the
 // module is meant to find the gap, not to hide it.
 func configureInput(s settings) map[string]any {
+	catalogs := make([]any, 0, len(s.Catalogs))
+	for _, c := range s.Catalogs {
+		catalogs = append(catalogs, map[string]any{"name": c.Name, "type": c.Type, "query": c.Query})
+	}
 	return map[string]any{
 		"moduleId": CapabilityID,
 		"settings": map[string]any{
@@ -69,6 +74,7 @@ func configureInput(s settings) map[string]any {
 			"language":     s.Language,
 			"region":       s.Region,
 			"includeAdult": s.IncludeAdult,
+			"catalogs":     catalogs,
 		},
 	}
 }
@@ -141,6 +147,80 @@ func contentSection(s settings) *ui.Element {
 		statusRow(
 			ui.Badge(label, tone),
 			ui.Button(action, "secondary", ui.OnTap(ui.Invoke("configureModule", configureInput(toggled))))))
+}
+
+// catalogSection lists the user's own `/discover` catalogs and adds more.
+//
+// Two fields rather than a filter builder, and that is a deliberate trade: the
+// alternative models every discover parameter TMDB has and goes stale the moment
+// it adds one. A raw query is a power-user surface — it says so — and it means
+// the whole of `/discover` is reachable rather than the subset somebody found
+// time to build a control for.
+func catalogSection(s settings) *ui.Element {
+	els := []ui.El{
+		ui.Banner("Build your own catalogs from TMDB's discover API. The query is raw discover parameters — see themoviedb.org's API docs for the full list.", ui.ToneInfo),
+	}
+
+	for i, c := range s.Catalogs {
+		kind := "Films"
+		if c.Type == typeTV {
+			kind = "Series"
+		}
+		removed := s
+		removed.Catalogs = withoutCatalog(s.Catalogs, i)
+		els = append(els, statusRow(
+			ui.Component("Text", ui.Prop("text", c.Name),
+				ui.Prop("style", map[string]any{"weight": "medium"})),
+			ui.Badge(kind, ui.ToneNeutral),
+			ui.Component("Text", ui.Prop("text", c.Query),
+				ui.Prop("style", map[string]any{"variant": "sm", "color": "text-muted", "lineClamp": 1})),
+			ui.Button("Remove", "danger", ui.OnTap(ui.Invoke("configureModule", configureInput(removed))))))
+	}
+
+	if len(s.Catalogs) == 0 {
+		els = append(els, ui.EmptyState("collections", "No custom catalogs yet"))
+	}
+
+	els = append(els,
+		addCatalogField(s, typeMovie, "Add a film catalog", "French Thrillers | with_genres=53&with_original_language=fr"),
+		addCatalogField(s, typeTV, "Add a series catalog", "Recent Sci-Fi | with_genres=10765&first_air_date.gte=2020-01-01"))
+
+	return ui.Section("Custom catalogs", els...)
+}
+
+// addCatalogField is one "name | query" submit field. The pair is encoded in a
+// single field because a SubmitField submits on its own — two fields would need
+// somewhere to hold the half-finished value between them, and a module's
+// settings screen has no such state.
+func addCatalogField(s settings, nativeType, label, placeholder string) *ui.Element {
+	// The typed value lands whole in Name, and settingsFrom splits it on the
+	// first "|" when it reads the document back. One placeholder rather than two:
+	// the runtime substitutes "$value" *everywhere* in the action, so a Name and
+	// a Query placeholder would both receive the entire string.
+	pending := s
+	pending.Catalogs = append(append([]customCatalog{}, s.Catalogs...),
+		customCatalog{Name: "$value", Type: nativeType})
+
+	return ui.Component("Box",
+		ui.Prop("style", map[string]any{"direction": "column", "gap": 2}),
+		ui.Group(
+			ui.Component("Text", ui.Prop("text", label),
+				ui.Prop("style", map[string]any{"weight": "medium"})),
+			ui.Component("SubmitField",
+				ui.Prop("placeholder", placeholder),
+				ui.Prop("submitLabel", "Add"),
+				ui.OnTap(ui.Invoke("configureModule", configureInput(pending))))))
+}
+
+// withoutCatalog returns the list with the entry at index removed.
+func withoutCatalog(catalogs []customCatalog, index int) []customCatalog {
+	out := make([]customCatalog, 0, len(catalogs))
+	for i, c := range catalogs {
+		if i != index {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // attributionSection carries TMDB's required attribution. It is rendered rather

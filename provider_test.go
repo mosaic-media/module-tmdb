@@ -2,6 +2,7 @@ package tmdb_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -297,4 +298,277 @@ func TestMalformedSettingsAreReportedNotIgnored(t *testing.T) {
 	if err == nil {
 		t.Fatal("a malformed settings document must be an error; silently treating it as empty hides a bad write")
 	}
+}
+
+// The endpoints added after the first release. Each is here because it either
+// closes a gap ADR 0034 recorded or removes a limit the first version shipped
+// with.
+
+func TestMetadataCarriesKeywordsCertificationTrailersAndSimilar(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	if len(meta.Keywords) != 2 || meta.Keywords[0] != "dystopia" {
+		t.Errorf("keywords = %v, want the film's own list", meta.Keywords)
+	}
+	// GB is configured, so the GB certification is used — not the US "R" that
+	// appears first in the response.
+	if meta.Certification != "15" {
+		t.Errorf("certification = %q, want the configured region's 15", meta.Certification)
+	}
+
+	if len(meta.Trailers) != 1 {
+		t.Fatalf("trailers = %d, want 1 (the featurette is not a trailer)", len(meta.Trailers))
+	}
+	trailer := meta.Trailers[0]
+	if trailer.Site != "YouTube" || trailer.Key != "trail" || !trailer.Official {
+		t.Errorf("trailer = %+v", trailer)
+	}
+
+	if len(meta.Similar) != 1 || meta.Similar[0].Title != "Blade Runner" {
+		t.Fatalf("similar = %+v, want the recommendation", meta.Similar)
+	}
+	// A related item must be openable, which means carrying a usable ref.
+	if meta.Similar[0].Ref.Provider != "tmdb" || meta.Similar[0].Ref.NativeID != "78" {
+		t.Errorf("similar ref = %+v", meta.Similar[0].Ref)
+	}
+	if meta.Similar[0].InLibrary || meta.Similar[0].NodeID != "" {
+		t.Error("a provider must leave InLibrary/NodeID for the Platform to fill (ADR 0028)")
+	}
+}
+
+func TestMetadataResolvesTheFranchiseInReleaseOrder(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+
+	if meta.Collection == nil {
+		t.Fatal("no collection; the franchise is one of ADR 0034's recorded gaps")
+	}
+	if meta.Collection.Name != "Blade Runner Collection" {
+		t.Errorf("collection name = %q", meta.Collection.Name)
+	}
+	if len(meta.Collection.Items) != 2 {
+		t.Fatalf("collection members = %d, want 2", len(meta.Collection.Items))
+	}
+	// TMDB returns members in popularity order; a franchise rail wants them
+	// chronological.
+	if meta.Collection.Items[0].Year != 1982 || meta.Collection.Items[1].Year != 2017 {
+		t.Errorf("collection order = %d then %d, want chronological",
+			meta.Collection.Items[0].Year, meta.Collection.Items[1].Year)
+	}
+	// The list includes the title being described, so a consumer wanting "the
+	// others" filters on the ref it already holds.
+	if meta.Collection.Items[1].Ref.NativeID != "335984" {
+		t.Errorf("the described film is not in its own collection: %+v", meta.Collection.Items)
+	}
+}
+
+func TestASeriesHasNoCollectionAndCarriesItsTVDbID(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	result, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: seriesRef("1396"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	bound := map[string]string{}
+	for _, b := range content.binds {
+		bound[b.SourceProvider] = b.SourceRef
+	}
+	// TVDB is television-only, and a TV-oriented source keys on it — without this
+	// binding the same series added from one would be a second Work.
+	if bound["tvdb"] != "81189" {
+		t.Errorf("tvdb binding = %q, want 81189", bound["tvdb"])
+	}
+	if bound["imdb"] != "tt0903747" || bound["tmdb"] != "1396" {
+		t.Errorf("bindings = %v", bound)
+	}
+	// Wikidata goes in the external-id document but is never bound: nothing
+	// sources content from it, and a binding asserts that something can.
+	if _, ok := bound["wikidata"]; ok {
+		t.Error("wikidata was bound as a source")
+	}
+
+	var ids map[string]string
+	if err := json.Unmarshal(content.nodes[result.WorkID].ExternalIDs, &ids); err != nil {
+		t.Fatalf("external ids: %v", err)
+	}
+	if ids["tvdb"] != "81189" {
+		t.Errorf("external ids = %v, want the tvdb id recorded", ids)
+	}
+}
+
+func TestMetadataAnswersForAnIMDbKeyedRef(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	// The ref another module would produce: Cinemeta and every Stremio addon key
+	// on IMDb ids, and under ADR 0072 a credential-free IMDb-keyed source is the
+	// guaranteed floor. Without the reverse lookup this module could not describe
+	// a single work in such a library.
+	ref := v1.ContentRef{
+		Provider: "cinemeta", NativeID: "tt1856101", NativeType: "movie",
+		MediaType: v1.MediaMovie, ExternalScheme: "imdb", ExternalID: "tt1856101",
+	}
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: ref, Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Metadata for an IMDb ref: %v", err)
+	}
+	if meta.Title != "Blade Runner 2049" {
+		t.Fatalf("title = %q", meta.Title)
+	}
+	// The ref echoes back unchanged: the caller addressed this item, and handing
+	// back a different identity would break the screen that asked.
+	if meta.Ref.NativeID != "tt1856101" {
+		t.Errorf("ref = %+v, want the caller's own ref echoed", meta.Ref)
+	}
+}
+
+func TestAnUnknownIMDbIDIsAClearError(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	ref := movieRef("tt0000000")
+	_, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: ref, Settings: keySettings(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "tt0000000") {
+		t.Fatalf("error = %v, want one naming the unresolvable id", err)
+	}
+}
+
+func TestCustomDiscoverCatalogs(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	ctx := context.Background()
+	caller := v1.CallerFromSession("s-1")
+
+	settings := []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","catalogs":[
+		{"name":"French Thrillers","type":"movie","query":"with_genres=53&with_original_language=fr"},
+		{"name":"Recent Sci-Fi","type":"tv","query":"with_genres=10765"}
+	]}`)
+
+	resp, err := capability.Catalogs(ctx, v1.CatalogsRequest{Caller: caller, Settings: settings})
+	if err != nil {
+		t.Fatalf("Catalogs: %v", err)
+	}
+
+	var names []string
+	for _, c := range resp.Catalogs {
+		names = append(names, c.Name)
+	}
+	if !containsString(names, "French Thrillers") || !containsString(names, "Recent Sci-Fi") {
+		t.Fatalf("catalogs = %v, want the user's own alongside the built-ins", names)
+	}
+
+	// Address the custom catalog. The fake refuses a request whose paging or
+	// credential the user's query overrode.
+	var custom v1.Catalog
+	for _, c := range resp.Catalogs {
+		if c.Name == "French Thrillers" {
+			custom = c
+		}
+	}
+	items, err := capability.CatalogItems(ctx, v1.CatalogItemsRequest{
+		Caller: caller, CatalogID: custom.ID, NativeType: custom.NativeType, Settings: settings,
+	})
+	if err != nil {
+		t.Fatalf("CatalogItems for a custom catalog: %v", err)
+	}
+	if len(items.Items) != 1 || items.Items[0].Ref.MediaType != v1.MediaMovie {
+		t.Fatalf("custom catalog items = %+v", items.Items)
+	}
+}
+
+// A discover query is free text from a settings screen, appended to a request
+// carrying the credential. The fake 403s if the credential was overridden.
+func TestACustomCatalogQueryCannotOverrideTheCredential(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	caller := v1.CallerFromSession("s-1")
+
+	settings := []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","catalogs":[
+		{"name":"Hostile","type":"movie","query":"api_key=attacker&page=9&with_genres=53"}
+	]}`)
+
+	resp, err := capability.Catalogs(context.Background(), v1.CatalogsRequest{Caller: caller, Settings: settings})
+	if err != nil {
+		t.Fatalf("Catalogs: %v", err)
+	}
+	var hostile v1.Catalog
+	for _, c := range resp.Catalogs {
+		if c.Name == "Hostile" {
+			hostile = c
+		}
+	}
+	if hostile.ID == "" {
+		t.Fatal("the catalog was dropped entirely; it should survive with its reserved parameters stripped")
+	}
+
+	items, err := capability.CatalogItems(context.Background(), v1.CatalogItemsRequest{
+		Caller: caller, CatalogID: hostile.ID, NativeType: hostile.NativeType, Settings: settings,
+	})
+	if err != nil {
+		t.Fatalf("CatalogItems: %v — the user's api_key or page reached the request", err)
+	}
+	if len(items.Items) != 1 {
+		t.Fatalf("items = %d", len(items.Items))
+	}
+}
+
+func TestImageBaseComesFromConfiguration(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	// TMDB publishes the CDN base rather than promising the hardcoded one holds
+	// forever; the fake serves a different host so a regression to the constant
+	// is visible.
+	if !strings.HasPrefix(meta.Poster, "https://fake-cdn.example/t/p/") {
+		t.Fatalf("poster = %q, want the configured CDN base", meta.Poster)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }

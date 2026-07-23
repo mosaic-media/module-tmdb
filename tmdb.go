@@ -16,32 +16,18 @@ import (
 // The TMDB v3 HTTP client. This file is the anti-corruption layer (ADR 0051):
 // every TMDB-ism — its two auth schemes, its split of one logical record across
 // `append_to_response` sub-objects, its image paths that are not URLs, its
-// per-season episode endpoint — stops here. Nothing above it sees a TMDB shape.
+// per-season episode endpoint, its parallel field names for films and series —
+// stops here. Nothing above it sees a TMDB shape.
 
 const (
 	// apiBase is TMDB's v3 API root. There is no other host and no versioned
 	// negotiation: v3 is the current API and v4 is an additive auth scheme over
 	// the same endpoints, which is why the token below can be either.
 	apiBase = "https://api.themoviedb.org/3"
-	// imageBase is TMDB's CDN root. A TMDB record carries a *path*
-	// ("/xyz.jpg"), never a URL — the size is the caller's choice, so the URL
-	// does not exist until this module builds it.
-	imageBase = "https://image.tmdb.org/t/p/"
 	// userAgent identifies Mosaic to TMDB. Sent for the same reason the Stremio
 	// module sends one: an unnamed client is the one that gets rate-limited or
 	// refused first, and the failure reads as the API being down.
 	userAgent = "Mosaic/1.0 (+https://github.com/mosaic-media)"
-)
-
-// Image sizes. TMDB serves each asset at a fixed set of widths and the caller
-// picks one per use; these are the sizes each surface actually renders at, so a
-// card does not download a 2000px poster to draw it 200px wide.
-const (
-	posterSize   = "w500"
-	backdropSize = "w1280"
-	logoSize     = "w500"
-	profileSize  = "w185"
-	stillSize    = "w300"
 )
 
 // seasonFetchConcurrency bounds the per-season episode fetches a series detail
@@ -50,6 +36,10 @@ const (
 // slow for a detail screen and unbounded is a burst TMDB will rate-limit, so
 // this is the middle.
 const seasonFetchConcurrency = 6
+
+// maxSimilar bounds the related-titles list. TMDB returns twenty per page; a
+// detail screen shows a rail, not a catalogue.
+const maxSimilar = 12
 
 // Client is a configured TMDB API client. It is built per invocation from the
 // module's settings rather than held on the Capability, because the API key is
@@ -62,12 +52,14 @@ type Client struct {
 	language string
 	region   string
 	adult    bool
+	catalogs []CatalogDecl
+	images   imageConfig
 }
 
 // NewClient builds a client over an HTTP client and a resolved settings value.
 // The Platform's own client is passed in rather than built here: it carries the
 // netguard dial guard and the outbound telemetry seam (ADR 0055).
-func NewClient(httpClient *http.Client, s settings) *Client {
+func NewClient(httpClient *http.Client, s settings, images imageConfig) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -83,6 +75,8 @@ func NewClient(httpClient *http.Client, s settings) *Client {
 		language: s.Language,
 		region:   s.Region,
 		adult:    s.IncludeAdult,
+		catalogs: catalogsFor(s.Catalogs),
+		images:   images,
 	}
 }
 
@@ -209,97 +203,69 @@ func (c *Client) Search(ctx context.Context, text string) ([]Preview, error) {
 		if r.MediaType != typeMovie && r.MediaType != typeTV {
 			continue
 		}
-		out = append(out, r.preview(r.MediaType))
+		out = append(out, c.preview(r, r.MediaType))
 	}
 	return out, nil
 }
 
-// Catalogs is the fixed set of collections this module exposes. Unlike a Stremio
-// addon, which declares its catalogs in a manifest, TMDB has no such
-// declaration — it has endpoints — so the list is curated here. It is
-// deliberately short: these are the views a home screen renders, not every
-// discover query TMDB can answer.
-func (c *Client) Catalogs() []CatalogDecl {
-	return []CatalogDecl{
-		{ID: "trending", Type: typeMovie, Name: "Trending Films", path: "/trending/movie/week"},
-		{ID: "trending", Type: typeTV, Name: "Trending Series", path: "/trending/tv/week"},
-		{ID: "popular", Type: typeMovie, Name: "Popular Films", path: "/movie/popular"},
-		{ID: "popular", Type: typeTV, Name: "Popular Series", path: "/tv/popular"},
-		{ID: "top_rated", Type: typeMovie, Name: "Top Rated Films", path: "/movie/top_rated"},
-		{ID: "top_rated", Type: typeTV, Name: "Top Rated Series", path: "/tv/top_rated"},
-		{ID: "now_playing", Type: typeMovie, Name: "In Cinemas", path: "/movie/now_playing"},
-		{ID: "on_the_air", Type: typeTV, Name: "On The Air", path: "/tv/on_the_air"},
-	}
-}
-
-// catalogPage is how many items one TMDB list page holds. It is fixed by the
-// API, and it is what converts the Platform's item-offset Skip into a page
-// number.
-const catalogPage = 20
-
-// CatalogItems lists one catalog's entries. Skip is an item offset and TMDB
-// pages in twenties, so it is converted rather than passed through; an offset
-// that lands mid-page rounds down, which repeats at most nineteen items rather
-// than skipping any.
-func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string, skip int) ([]Preview, error) {
-	decl, ok := c.findCatalog(catalogID, nativeType)
-	if !ok {
-		return nil, fmt.Errorf("unknown catalog %q for type %q", catalogID, nativeType)
-	}
-
+// FindByIMDb resolves an IMDb id to this source's own id — the reverse of the
+// lookup every other call makes.
+//
+// It is what lets TMDB describe a title someone else materialised. Cinemeta and
+// every Stremio addon key on IMDb ids (ADR 0072 makes a credential-free,
+// IMDb-keyed source the guaranteed floor), so without this the richer provider
+// could not answer for a single work in such a library — it would hold no id it
+// recognised. Returns false, no error, when TMDB knows the id but has no film or
+// series behind it.
+func (c *Client) FindByIMDb(ctx context.Context, imdbID string) (string, string, bool, error) {
 	params := url.Values{}
-	params.Set("page", strconv.Itoa(skip/catalogPage+1))
-	if c.region != "" {
-		params.Set("region", c.region)
-	}
+	params.Set("external_source", "imdb_id")
 
 	var resp struct {
-		Results []rawPreview `json:"results"`
+		MovieResults []rawPreview `json:"movie_results"`
+		TVResults    []rawPreview `json:"tv_results"`
+		// An IMDb id can name an episode, which resolves to its show rather than
+		// to nothing — the show is what a detail screen wants.
+		EpisodeResults []struct {
+			ShowID int `json:"show_id"`
+		} `json:"tv_episode_results"`
 	}
-	if err := c.get(ctx, decl.path, params, &resp); err != nil {
-		return nil, err
+	if err := c.get(ctx, "/find/"+url.PathEscape(imdbID), params, &resp); err != nil {
+		return "", "", false, err
 	}
 
-	out := make([]Preview, 0, len(resp.Results))
-	for _, r := range resp.Results {
-		// A list endpoint's results carry no media_type — the endpoint *is* the
-		// type — so it comes from the catalog rather than from the record. The
-		// trending endpoints do return one; taking the declaration's either way
-		// keeps a single path.
-		out = append(out, r.preview(decl.Type))
+	switch {
+	case len(resp.MovieResults) > 0:
+		return strconv.Itoa(resp.MovieResults[0].ID), typeMovie, true, nil
+	case len(resp.TVResults) > 0:
+		return strconv.Itoa(resp.TVResults[0].ID), typeTV, true, nil
+	case len(resp.EpisodeResults) > 0:
+		return strconv.Itoa(resp.EpisodeResults[0].ShowID), typeTV, true, nil
+	default:
+		return "", "", false, nil
 	}
-	return out, nil
 }
 
-// findCatalog resolves a catalog declaration by its id and type. Two catalogs
-// share an id ("popular" for film and for television), so the type is part of
-// the key rather than decoration.
-func (c *Client) findCatalog(id, nativeType string) (CatalogDecl, bool) {
-	for _, decl := range c.Catalogs() {
-		if decl.ID == id && decl.Type == nativeType {
-			return decl, true
-		}
-	}
-	return CatalogDecl{}, false
-}
-
-// Detail fetches one title's full record: the descriptive fields, its billed
-// cast, its artwork variants and its external ids, in **one** request.
+// Detail fetches one title's full record in **one** request.
 //
 // The single request is `append_to_response`, and it is worth naming because the
-// obvious implementation is four. TMDB splits credits, images and external ids
-// onto their own endpoints; appending them folds all four into one round trip,
-// which for a detail screen is the difference between one latency and four.
+// obvious implementation is eight. TMDB splits credits, images, external ids,
+// keywords, recommendations, videos and certifications onto their own endpoints;
+// appending folds all of them into one round trip, which for a detail screen is
+// the difference between one latency and eight. TMDB allows twenty appended
+// sub-requests, so this is well inside the budget.
 //
-// For a series it then fetches each season's episodes, which TMDB offers no way
-// to avoid — there is no endpoint that returns a show's whole episode list.
+// Two things it cannot fold in, and both are named rather than hidden: a
+// series' episodes cost one request per season, because TMDB has no endpoint
+// returning a show's whole episode list; and a film's franchise costs one more,
+// because the detail carries only the collection's name and id.
 func (c *Client) Detail(ctx context.Context, nativeType, id string) (Title, error) {
 	if nativeType != typeMovie && nativeType != typeTV {
 		return Title{}, fmt.Errorf("unsupported TMDB type %q; expected %q or %q", nativeType, typeMovie, typeTV)
 	}
 
 	params := url.Values{}
-	params.Set("append_to_response", "credits,images,external_ids")
+	params.Set("append_to_response", appendFor(nativeType))
 	// Without this, `images` returns only assets tagged with the request
 	// language and a show whose logo is untagged appears to have none. The
 	// explicit null is TMDB's spelling of "language-neutral", which is where most
@@ -311,7 +277,8 @@ func (c *Client) Detail(ctx context.Context, nativeType, id string) (Title, erro
 		return Title{}, err
 	}
 
-	title := raw.title(nativeType)
+	title := c.title(raw, nativeType)
+
 	if nativeType == typeTV {
 		episodes, err := c.episodes(ctx, id, raw.Seasons)
 		if err != nil {
@@ -319,7 +286,32 @@ func (c *Client) Detail(ctx context.Context, nativeType, id string) (Title, erro
 		}
 		title.Episodes = episodes
 	}
+
+	// The franchise, when there is one. Best-effort: a detail screen without its
+	// collection rail is a smaller thing than a detail screen that will not
+	// render, and the name is already in hand either way.
+	if raw.BelongsToCollection != nil {
+		collection, err := c.collection(ctx, raw.BelongsToCollection.ID)
+		if err == nil {
+			title.Collection = collection
+		} else {
+			title.Collection = &Collection{Name: raw.BelongsToCollection.Name}
+		}
+	}
+
 	return title, nil
+}
+
+// appendFor is the sub-request list for a type. It differs between films and
+// series because TMDB spells the same concept differently for each: a film's age
+// rating lives in `release_dates` (per country, per release), a series' in
+// `content_ratings` (per country, flat).
+func appendFor(nativeType string) string {
+	common := "credits,images,external_ids,keywords,recommendations,videos"
+	if nativeType == typeTV {
+		return common + ",content_ratings"
+	}
+	return common + ",release_dates"
 }
 
 // imageLanguages builds the include_image_language value: the configured
@@ -333,6 +325,37 @@ func imageLanguages(language string) string {
 		return "en,null"
 	}
 	return base + ",en,null"
+}
+
+// collection fetches a franchise and its members.
+func (c *Client) collection(ctx context.Context, id int) (*Collection, error) {
+	var raw struct {
+		Name         string       `json:"name"`
+		Overview     string       `json:"overview"`
+		PosterPath   string       `json:"poster_path"`
+		BackdropPath string       `json:"backdrop_path"`
+		Parts        []rawPreview `json:"parts"`
+	}
+	if err := c.get(ctx, "/collection/"+strconv.Itoa(id), nil, &raw); err != nil {
+		return nil, err
+	}
+
+	items := make([]Preview, 0, len(raw.Parts))
+	for _, p := range raw.Parts {
+		items = append(items, c.preview(p, typeMovie))
+	}
+	// Chronological, which is the order a franchise rail wants and not the order
+	// TMDB returns — its `parts` come back in popularity order, so the third film
+	// leads.
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Year < items[j].Year })
+
+	return &Collection{
+		Name:     raw.Name,
+		Overview: raw.Overview,
+		Poster:   c.imageURL(raw.PosterPath, c.images.poster),
+		Backdrop: c.imageURL(raw.BackdropPath, c.images.backdrop),
+		Items:    items,
+	}, nil
 }
 
 // episodes fetches every season's episode list concurrently, bounded, and
@@ -371,7 +394,7 @@ func (c *Client) episodes(ctx context.Context, id string, seasons []rawSeasonSum
 			}
 			mu.Lock()
 			for _, e := range resp.Episodes {
-				out = append(out, e.episode(number))
+				out = append(out, c.episode(e, number))
 			}
 			mu.Unlock()
 		}(s.SeasonNumber)
@@ -390,8 +413,8 @@ func (c *Client) episodes(ctx context.Context, id string, seasons []rawSeasonSum
 // The translated types. Everything above the client speaks these; nothing above
 // it speaks TMDB's.
 
-// Preview is one search or catalog result — enough to render a row and to
-// address the title later.
+// Preview is one search, catalog, franchise or recommendation result — enough to
+// render a row and to address the title later.
 type Preview struct {
 	ID         string
 	NativeType string
@@ -400,20 +423,16 @@ type Preview struct {
 	Poster     string
 }
 
-// CatalogDecl is one collection this module exposes. The path is unexported:
-// which endpoint backs a catalog is this file's business, not a caller's.
-type CatalogDecl struct {
-	ID   string
-	Type string
-	Name string
-	path string
-}
-
 // Title is one film or series, fully described.
 type Title struct {
 	ID         string
 	NativeType string
 	IMDbID     string
+	// TVDbID is present for series only — TVDB is television-focused and TMDB
+	// reports no such id for a film. It is bound alongside the others so a title
+	// added here dedups against a TVDB-keyed source.
+	TVDbID     string
+	WikidataID string
 	Title      string
 	Year       int
 	Overview   string
@@ -421,16 +440,31 @@ type Title struct {
 	Backdrop   string
 	Logo       string
 	Genres     []string
-	Rating     float64
-	Runtime    string
-	Cast       []Credit
+	Keywords   []string
+	// Certification is the age rating for the configured region, empty when TMDB
+	// has none for it.
+	Certification string
+	Rating        float64
+	Runtime       string
+	Cast          []Credit
+	Trailers      []Trailer
+	// Similar are TMDB's recommendations — the editorially better of its two
+	// related-titles endpoints. `similar` is derived from shared genres and
+	// keywords and returns markedly worse suggestions.
+	Similar []Preview
 	// Episodes is populated for a series only, in season/episode order.
 	Episodes []Episode
-	// CollectionName is the franchise a film belongs to ("The Matrix
-	// Collection"), empty otherwise. Carried because TMDB has it and it is one
-	// of the gaps a metadata module was meant to close — see the README for why
-	// nothing consumes it yet.
-	CollectionName string
+	// Collection is the franchise a film belongs to, nil otherwise.
+	Collection *Collection
+}
+
+// Collection is a franchise and its members.
+type Collection struct {
+	Name     string
+	Overview string
+	Poster   string
+	Backdrop string
+	Items    []Preview
 }
 
 // Credit is one billed cast member.
@@ -438,6 +472,14 @@ type Credit struct {
 	Name      string
 	Character string
 	Photo     string
+}
+
+// Trailer is one promotional video.
+type Trailer struct {
+	Name     string
+	Site     string
+	Key      string
+	Official bool
 }
 
 // Episode is one episode of a series.
@@ -472,7 +514,7 @@ type rawPreview struct {
 // film has `title`/`release_date` and a series has `name`/`first_air_date` for
 // the same two facts, which is the single most repetitive TMDB-ism and is
 // collapsed here so nothing downstream branches on it.
-func (r rawPreview) preview(nativeType string) Preview {
+func (c *Client) preview(r rawPreview, nativeType string) Preview {
 	title, date := r.Title, r.ReleaseDate
 	if nativeType == typeTV {
 		title, date = r.Name, r.FirstAirDate
@@ -482,29 +524,28 @@ func (r rawPreview) preview(nativeType string) Preview {
 		NativeType: nativeType,
 		Title:      title,
 		Year:       parseYear(date),
-		Poster:     imageURL(r.PosterPath, posterSize),
+		Poster:     c.imageURL(r.PosterPath, c.images.poster),
 	}
 }
 
 type rawTitle struct {
-	ID           int     `json:"id"`
-	Title        string  `json:"title"`
-	Name         string  `json:"name"`
-	Overview     string  `json:"overview"`
-	ReleaseDate  string  `json:"release_date"`
-	FirstAirDate string  `json:"first_air_date"`
-	PosterPath   string  `json:"poster_path"`
-	BackdropPath string  `json:"backdrop_path"`
-	VoteAverage  float64 `json:"vote_average"`
-	Runtime      int     `json:"runtime"`
-	// EpisodeRunTime is a *list* on a series, because episodes vary; the first
-	// entry is TMDB's typical value.
-	EpisodeRunTime []int `json:"episode_run_time"`
+	ID             int     `json:"id"`
+	Title          string  `json:"title"`
+	Name           string  `json:"name"`
+	Overview       string  `json:"overview"`
+	ReleaseDate    string  `json:"release_date"`
+	FirstAirDate   string  `json:"first_air_date"`
+	PosterPath     string  `json:"poster_path"`
+	BackdropPath   string  `json:"backdrop_path"`
+	VoteAverage    float64 `json:"vote_average"`
+	Runtime        int     `json:"runtime"`
+	EpisodeRunTime []int   `json:"episode_run_time"`
 	Genres         []struct {
 		Name string `json:"name"`
 	} `json:"genres"`
 	Seasons             []rawSeasonSummary `json:"seasons"`
 	BelongsToCollection *struct {
+		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"belongs_to_collection"`
 	Credits struct {
@@ -514,8 +555,28 @@ type rawTitle struct {
 		Logos []rawImage `json:"logos"`
 	} `json:"images"`
 	ExternalIDs struct {
-		IMDbID string `json:"imdb_id"`
+		IMDbID     string `json:"imdb_id"`
+		TVDbID     int    `json:"tvdb_id"`
+		WikidataID string `json:"wikidata_id"`
 	} `json:"external_ids"`
+	Keywords struct {
+		// TMDB spells the same list two ways: `keywords` on a film and `results`
+		// on a series. Decoding one and not the other is a silent empty list.
+		Movie  []rawKeyword `json:"keywords"`
+		Series []rawKeyword `json:"results"`
+	} `json:"keywords"`
+	Recommendations struct {
+		Results []rawPreview `json:"results"`
+	} `json:"recommendations"`
+	Videos struct {
+		Results []rawVideo `json:"results"`
+	} `json:"videos"`
+	ReleaseDates struct {
+		Results []rawReleaseDates `json:"results"`
+	} `json:"release_dates"`
+	ContentRatings struct {
+		Results []rawContentRating `json:"results"`
+	} `json:"content_ratings"`
 }
 
 type rawSeasonSummary struct {
@@ -536,6 +597,30 @@ type rawImage struct {
 	VoteAverage float64 `json:"vote_average"`
 }
 
+type rawKeyword struct {
+	Name string `json:"name"`
+}
+
+type rawVideo struct {
+	Name     string `json:"name"`
+	Site     string `json:"site"`
+	Key      string `json:"key"`
+	Type     string `json:"type"`
+	Official bool   `json:"official"`
+}
+
+type rawReleaseDates struct {
+	CountryCode  string `json:"iso_3166_1"`
+	ReleaseDates []struct {
+		Certification string `json:"certification"`
+	} `json:"release_dates"`
+}
+
+type rawContentRating struct {
+	CountryCode string `json:"iso_3166_1"`
+	Rating      string `json:"rating"`
+}
+
 type rawEpisode struct {
 	EpisodeNumber int    `json:"episode_number"`
 	Name          string `json:"name"`
@@ -544,13 +629,13 @@ type rawEpisode struct {
 	AirDate       string `json:"air_date"`
 }
 
-func (r rawEpisode) episode(season int) Episode {
+func (c *Client) episode(r rawEpisode, season int) Episode {
 	return Episode{
 		Season:    season,
 		Episode:   r.EpisodeNumber,
 		Title:     r.Name,
 		Overview:  r.Overview,
-		Thumbnail: imageURL(r.StillPath, stillSize),
+		Thumbnail: c.imageURL(r.StillPath, c.images.still),
 		Released:  r.AirDate,
 	}
 }
@@ -561,7 +646,7 @@ func (r rawEpisode) episode(season int) Episode {
 const maxCast = 18
 
 // title translates a full TMDB record into the module's own shape.
-func (r rawTitle) title(nativeType string) Title {
+func (c *Client) title(r rawTitle, nativeType string) Title {
 	name, date := r.Title, r.ReleaseDate
 	if nativeType == typeTV {
 		name, date = r.Name, r.FirstAirDate
@@ -581,32 +666,123 @@ func (r rawTitle) title(nativeType string) Title {
 		cast = cast[:maxCast]
 	}
 	credits := make([]Credit, 0, len(cast))
-	for _, c := range cast {
+	for _, m := range cast {
 		credits = append(credits, Credit{
-			Name:      c.Name,
-			Character: c.Character,
-			Photo:     imageURL(c.ProfilePath, profileSize),
+			Name:      m.Name,
+			Character: m.Character,
+			Photo:     c.imageURL(m.ProfilePath, c.images.profile),
 		})
 	}
 
+	similar := make([]Preview, 0, maxSimilar)
+	for _, p := range r.Recommendations.Results {
+		if len(similar) >= maxSimilar {
+			break
+		}
+		// A recommendation carries its own media_type, because TMDB will
+		// recommend a series alongside a film.
+		kind := p.MediaType
+		if kind != typeMovie && kind != typeTV {
+			kind = nativeType
+		}
+		similar = append(similar, c.preview(p, kind))
+	}
+
 	out := Title{
-		ID:         strconv.Itoa(r.ID),
-		NativeType: nativeType,
-		IMDbID:     strings.TrimSpace(r.ExternalIDs.IMDbID),
-		Title:      name,
-		Year:       parseYear(date),
-		Overview:   r.Overview,
-		Poster:     imageURL(r.PosterPath, posterSize),
-		Backdrop:   imageURL(r.BackdropPath, backdropSize),
-		Logo:       pickLogo(r.Images.Logos),
-		Genres:     genres,
-		Rating:     r.VoteAverage,
-		Runtime:    runtimeLabel(r.Runtime, r.EpisodeRunTime),
-		Cast:       credits,
+		ID:            strconv.Itoa(r.ID),
+		NativeType:    nativeType,
+		IMDbID:        strings.TrimSpace(r.ExternalIDs.IMDbID),
+		WikidataID:    strings.TrimSpace(r.ExternalIDs.WikidataID),
+		Title:         name,
+		Year:          parseYear(date),
+		Overview:      r.Overview,
+		Poster:        c.imageURL(r.PosterPath, c.images.poster),
+		Backdrop:      c.imageURL(r.BackdropPath, c.images.backdrop),
+		Logo:          c.pickLogo(r.Images.Logos),
+		Genres:        genres,
+		Keywords:      keywordsOf(r),
+		Certification: c.certificationOf(r, nativeType),
+		Rating:        r.VoteAverage,
+		Runtime:       runtimeLabel(r.Runtime, r.EpisodeRunTime),
+		Cast:          credits,
+		Trailers:      trailersOf(r.Videos.Results),
+		Similar:       similar,
 	}
-	if r.BelongsToCollection != nil {
-		out.CollectionName = r.BelongsToCollection.Name
+	// TVDB reports television only, and TMDB renders "no id" as 0 rather than by
+	// omitting the field.
+	if r.ExternalIDs.TVDbID > 0 {
+		out.TVDbID = strconv.Itoa(r.ExternalIDs.TVDbID)
 	}
+	return out
+}
+
+// keywordsOf reads the keyword list from whichever of TMDB's two spellings the
+// response used.
+func keywordsOf(r rawTitle) []string {
+	raw := r.Keywords.Movie
+	if len(raw) == 0 {
+		raw = r.Keywords.Series
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, k := range raw {
+		if name := strings.TrimSpace(k.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// certificationOf reads the age rating for the configured region.
+//
+// It returns empty rather than falling back to another country's rating, which
+// is the whole point: a US "R" shown to a household that set GB is not a
+// conservative approximation, it is a different scale reported as if it were
+// theirs. Empty means unknown, and a consumer must not read that as permissive.
+func (c *Client) certificationOf(r rawTitle, nativeType string) string {
+	region := c.region
+	if region == "" {
+		return ""
+	}
+	if nativeType == typeTV {
+		for _, rating := range r.ContentRatings.Results {
+			if strings.EqualFold(rating.CountryCode, region) {
+				return strings.TrimSpace(rating.Rating)
+			}
+		}
+		return ""
+	}
+	for _, country := range r.ReleaseDates.Results {
+		if !strings.EqualFold(country.CountryCode, region) {
+			continue
+		}
+		// A country has several dated releases (cinema, digital, physical) and
+		// only some carry a certification.
+		for _, release := range country.ReleaseDates {
+			if cert := strings.TrimSpace(release.Certification); cert != "" {
+				return cert
+			}
+		}
+	}
+	return ""
+}
+
+// trailersOf keeps the promotional videos, dropping the featurettes, clips and
+// behind-the-scenes reels TMDB returns in the same list. Official entries lead.
+func trailersOf(videos []rawVideo) []Trailer {
+	var out []Trailer
+	for _, v := range videos {
+		if v.Key == "" {
+			continue
+		}
+		if !strings.EqualFold(v.Type, "Trailer") && !strings.EqualFold(v.Type, "Teaser") {
+			continue
+		}
+		out = append(out, Trailer{Name: v.Name, Site: v.Site, Key: v.Key, Official: v.Official})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Official && !out[j].Official })
 	return out
 }
 
@@ -618,7 +794,7 @@ func (r rawTitle) title(nativeType string) Title {
 // tagged one has been vetted as the title treatment for a language. The request
 // already restricted the set to the languages that are acceptable, so anything
 // returned is a legitimate choice and this is only ranking within it.
-func pickLogo(logos []rawImage) string {
+func (c *Client) pickLogo(logos []rawImage) string {
 	best := -1
 	for i, l := range logos {
 		if l.FilePath == "" {
@@ -639,7 +815,7 @@ func pickLogo(logos []rawImage) string {
 	if best < 0 {
 		return ""
 	}
-	return imageURL(logos[best].FilePath, logoSize)
+	return c.imageURL(logos[best].FilePath, c.images.logo)
 }
 
 // runtimeLabel renders a runtime as the display string the SDK asks for. The
@@ -667,11 +843,11 @@ func runtimeLabel(movieRuntime int, episodeRuntime []int) string {
 // imageURL turns a TMDB image path into a URL at the given size. An empty path
 // yields an empty URL rather than a link to nothing, so "the source had none"
 // stays distinguishable from a broken image.
-func imageURL(path, size string) string {
+func (c *Client) imageURL(path, size string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	return imageBase + size + path
+	return c.images.base + size + path
 }
 
 // parseYear reads the leading year from a TMDB date ("2017-04-21"), returning 0

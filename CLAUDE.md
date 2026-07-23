@@ -45,14 +45,34 @@ complete outcome, not a degraded one.
 
 When something cannot be expressed, that is a **finding**, not an obstacle to
 work around. Take it to the SDK as an additive `v0.x` bump, or record it in the
-roadmap as an open gap. **Do not simulate the missing surface locally.** Two are
-open and both are written up in the README's "honest limits":
+roadmap as an open gap. **Do not simulate the missing surface locally.** This
+module has already forced one bump — SDK `v0.17.0` added `Keywords`,
+`Certification`, `Similar`, `Collection` and `Trailers` because TMDB returns all
+five and there was nowhere to put them. Three remain open, all written up in the
+README's "honest limits":
 
-- `ContentMetadata` has no field for franchise **collections** or **similar**
-  titles. TMDB returns both. That is the next SDK growth this module motivates.
+- **No relation read.** `RelateContent` can write a `RelationCollectionMember`
+  edge and nothing in `ContentService` can read one back, so a franchise is
+  re-derived per render rather than known to the library. Do not write edges
+  nothing can read.
+- **Artwork candidates.** The `images` response carries every poster and backdrop
+  variant and `v1.Artwork` holds one string per slot. ADR 0071 anticipates a
+  candidate set; changing what a stored artwork value *means* is an ADR, not a
+  field.
 - `configureModule` **replaces** the settings document; there is no merge. A
   module with a secret setting must therefore echo the secret through the client
   to change any other setting. See the comment on `configureInput`.
+
+## Two things in here are security-relevant
+
+- **A custom catalog's discover query is free text from a settings screen**, and
+  it is appended to a request carrying the credential. `sanitiseDiscoverQuery`
+  strips `api_key`, `page`, `language` and `include_adult`; without it a query
+  reading `api_key=…` would silently replace the module's own. Do not widen that
+  list's inverse — add to `reservedDiscoverParams`, never remove.
+- **`Certification` is region-exact or empty.** Never fall back to another
+  country's rating. Empty means unknown, and a consumer must not read it as
+  permissive.
 
 ## Everything runs in the container, nothing runs on the host
 

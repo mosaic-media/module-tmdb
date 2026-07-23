@@ -16,7 +16,7 @@ import (
 // multi-search, so one query covers film and television and the media-type
 // filter narrows the answer rather than choosing the endpoint.
 func (c *Capability) Search(ctx context.Context, req v1.SearchRequest) (v1.SearchResponse, error) {
-	client, err := c.clientFrom(req.Settings)
+	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
 		return v1.SearchResponse{}, err
 	}
@@ -41,12 +41,16 @@ func (c *Capability) Search(ctx context.Context, req v1.SearchRequest) (v1.Searc
 	return v1.SearchResponse{Results: results}, nil
 }
 
-// Catalogs lists the collections this module exposes (RoleCatalog). The set is
-// fixed and curated here rather than declared by the source: TMDB has endpoints,
-// not a catalog manifest, so somebody has to choose which of them are worth
-// showing and that choice belongs at this boundary.
+// Catalogs lists the collections this module exposes (RoleCatalog) — a curated
+// built-in set plus whatever `/discover` queries the user has defined.
+//
+// TMDB has endpoints rather than a catalog manifest, so unlike a Stremio addon
+// there is nobody to ask what collections exist and the built-in set is somebody's
+// choice. `/discover` is what stops that choice being the ceiling. Nothing in the
+// SDK had to grow for it: this role already returned a list rather than a
+// constant, so user-defined catalogs were a settings question all along.
 func (c *Capability) Catalogs(ctx context.Context, req v1.CatalogsRequest) (v1.CatalogsResponse, error) {
-	client, err := c.clientFrom(req.Settings)
+	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
 		return v1.CatalogsResponse{}, err
 	}
@@ -63,7 +67,7 @@ func (c *Capability) Catalogs(ctx context.Context, req v1.CatalogsRequest) (v1.C
 // It touches no part of the object graph — browsing a source must not flood the
 // library with everything the source knows about.
 func (c *Capability) CatalogItems(ctx context.Context, req v1.CatalogItemsRequest) (v1.CatalogItemsResponse, error) {
-	client, err := c.clientFrom(req.Settings)
+	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
 		return v1.CatalogItemsResponse{}, err
 	}

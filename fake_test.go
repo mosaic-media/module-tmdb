@@ -87,7 +87,7 @@ func fakeTMDB() *httptest.Server {
 				map[string]any{"name": "Science Fiction"},
 				map[string]any{"name": "Drama"},
 			},
-			"belongs_to_collection": map[string]any{"name": "Blade Runner Collection"},
+			"belongs_to_collection": map[string]any{"id": 344, "name": "Blade Runner Collection"},
 			"credits": map[string]any{"cast": []any{
 				// Deliberately out of billing order, to prove the module sorts.
 				map[string]any{"name": "Ana de Armas", "character": "Joi", "profile_path": "/ana.jpg", "order": 2},
@@ -98,9 +98,91 @@ func fakeTMDB() *httptest.Server {
 				map[string]any{"file_path": "/neutral.png", "iso_639_1": nil, "vote_average": 9},
 				map[string]any{"file_path": "/english.png", "iso_639_1": "en", "vote_average": 5},
 			}},
-			"external_ids": map[string]any{"imdb_id": "tt1856101"},
+			"external_ids": map[string]any{"imdb_id": "tt1856101", "wikidata_id": "Q18704460"},
+			// A film spells its keyword list `keywords`; a series spells the same
+			// list `results`.
+			"keywords": map[string]any{"keywords": []any{
+				map[string]any{"name": "dystopia"},
+				map[string]any{"name": "replicant"},
+			}},
+			"recommendations": map[string]any{"results": []any{
+				map[string]any{"id": 78, "media_type": "movie", "title": "Blade Runner", "release_date": "1982-06-25", "poster_path": "/br.jpg"},
+			}},
+			"videos": map[string]any{"results": []any{
+				map[string]any{"name": "Featurette", "site": "YouTube", "key": "feat", "type": "Featurette"},
+				map[string]any{"name": "Official Trailer", "site": "YouTube", "key": "trail", "type": "Trailer", "official": true},
+			}},
+			"release_dates": map[string]any{"results": []any{
+				map[string]any{"iso_3166_1": "US", "release_dates": []any{map[string]any{"certification": "R"}}},
+				map[string]any{"iso_3166_1": "GB", "release_dates": []any{
+					map[string]any{"certification": ""},
+					map[string]any{"certification": "15"},
+				}},
+			}},
 		})
 	})
+
+	// The franchise. The detail carries only its id and name; the members cost a
+	// second request, and TMDB returns them in popularity rather than release
+	// order.
+	mux.HandleFunc("/3/collection/344", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"name": "Blade Runner Collection", "overview": "A dystopian franchise.",
+			"poster_path": "/coll.jpg", "backdrop_path": "/collback.jpg",
+			"parts": []any{
+				map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04", "poster_path": "/poster.jpg"},
+				map[string]any{"id": 78, "title": "Blade Runner", "release_date": "1982-06-25", "poster_path": "/br.jpg"},
+			},
+		})
+	})
+
+	// The reverse lookup: an IMDb id to TMDB's own.
+	mux.HandleFunc("/3/find/tt1856101", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("external_source") != "imdb_id" {
+			http.Error(w, "external_source is required", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"movie_results": []any{map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04"}},
+		})
+	})
+	mux.HandleFunc("/3/find/tt0000000", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"movie_results": []any{}, "tv_results": []any{}})
+	})
+
+	mux.HandleFunc("/3/configuration", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"images": map[string]any{
+			"secure_base_url": "https://fake-cdn.example/t/p/",
+			"poster_sizes":    []any{"w92", "w500", "original"},
+			"backdrop_sizes":  []any{"w1280", "original"},
+			"logo_sizes":      []any{"w500", "original"},
+			"profile_sizes":   []any{"w185", "original"},
+			"still_sizes":     []any{"w300", "original"},
+		}})
+	})
+
+	// Discover, backing user-defined catalogs. It asserts the module's own
+	// parameters won rather than the user's.
+	discover := func(body map[string]any) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("api_key") == "attacker" {
+				http.Error(w, "a user query overrode the credential", http.StatusForbidden)
+				return
+			}
+			if q.Get("page") != "1" {
+				http.Error(w, "the module must own paging, got page="+q.Get("page"), http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, body)
+		}
+	}
+	mux.HandleFunc("/3/discover/movie", discover(map[string]any{"results": []any{
+		map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04", "poster_path": "/poster.jpg"},
+	}}))
+	mux.HandleFunc("/3/discover/tv", discover(map[string]any{"results": []any{
+		map[string]any{"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20", "poster_path": "/bb.jpg"},
+	}}))
 
 	mux.HandleFunc("/3/tv/1396", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
@@ -119,9 +201,16 @@ func fakeTMDB() *httptest.Server {
 				map[string]any{"season_number": 2, "episode_count": 1},
 				map[string]any{"season_number": 3, "episode_count": 0},
 			},
-			"credits":      map[string]any{"cast": []any{map[string]any{"name": "Bryan Cranston", "character": "Walter White", "profile_path": "/bryan.jpg", "order": 0}}},
-			"images":       map[string]any{"logos": []any{}},
-			"external_ids": map[string]any{"imdb_id": "tt0903747"},
+			"credits": map[string]any{"cast": []any{map[string]any{"name": "Bryan Cranston", "character": "Walter White", "profile_path": "/bryan.jpg", "order": 0}}},
+			"images":  map[string]any{"logos": []any{}},
+			// TVDB reports television only, which is why a film's external ids
+			// above carry no tvdb_id.
+			"external_ids": map[string]any{"imdb_id": "tt0903747", "tvdb_id": 81189},
+			"keywords":     map[string]any{"results": []any{map[string]any{"name": "drug cartel"}}},
+			"content_ratings": map[string]any{"results": []any{
+				map[string]any{"iso_3166_1": "US", "rating": "TV-MA"},
+				map[string]any{"iso_3166_1": "GB", "rating": "18"},
+			}},
 		})
 	})
 

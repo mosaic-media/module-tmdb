@@ -18,17 +18,22 @@
 // # What it provides
 //
 //   - RoleMetadata — full descriptive detail for a ref: overview, genres,
-//     rating, runtime, poster/backdrop/**clearlogo**, billed cast with character
-//     names and headshots, and for a series a per-episode preview with stills.
-//     Two of those — the logo and the cast photographs — are what a Stremio
-//     meta addon structurally cannot supply (ADR 0034's recorded gaps).
+//     keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**,
+//     billed cast with character names and headshots, trailers, related titles,
+//     the franchise a film belongs to, and for a series a per-episode preview
+//     with stills. The logo, the cast photographs, the franchise and the related
+//     titles are all things a Stremio meta addon structurally cannot supply
+//     (ADR 0034's recorded gaps).
 //   - RoleSearch — free-text search over film and television, the other half of
 //     the capability class ADR 0035 requires. Without it nothing can produce a
 //     ref this module's metadata role would answer for, so the two ship together
-//     rather than search being an extra.
-//   - RoleCatalog — trending, popular, top-rated and in-cinemas/on-air
-//     collections, so a fresh install has rails to render rather than an empty
-//     home screen.
+//     rather than search being an extra. It also resolves an IMDb id to TMDB's
+//     own, which is what lets this module describe a work some other, IMDb-keyed
+//     source materialised (ADR 0072 makes such a source the guaranteed floor).
+//   - RoleCatalog — trending, popular, top-rated and in-cinemas/on-air, plus any
+//     `/discover` query the user defines, so a fresh install has rails to render
+//     rather than an empty home screen and a curated set is a floor rather than
+//     a ceiling.
 //   - RoleSettingsUI — the API key form. TMDB has no anonymous access, so the
 //     module is inert until a key is set; the screen is the only path to setting
 //     one (ADR 0038).
