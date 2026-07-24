@@ -284,6 +284,9 @@ func (c *Capability) Manifest() v1.Manifest {
 		ID:      CapabilityID,
 		Version: v1.ModuleVersion(modulePath),
 		Name:    "TMDB metadata",
+		Description: "The Movie Database: titles, descriptions, cast, artwork and release details " +
+			"for films and television, in your language and region. Works out of the box with the " +
+			"bundled key, or add your own to stop sharing its rate limit.",
 		Provides: []v1.Role{
 			v1.RoleMetadata, v1.RoleSearch, v1.RoleCatalog, v1.RoleSettingsUI,
 		},
