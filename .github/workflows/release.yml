@@ -109,3 +109,35 @@ jobs:
         env:
           GOPROXY: https://proxy.golang.org,direct
           GOFLAGS: -mod=mod
+
+  # ADR 0078: this module is a *core* module, so its release has to reach the
+  # Platform binary. Carrying that bump by hand is the friction that record
+  # removes — and the step people got wrong was waiting for the proxy, which
+  # the `release` job above has now already proved.
+  #
+  # So this fires last and only on success. A dispatch that arrived before
+  # resolvability was proven would just move the race into the other
+  # repository, which is the whole thing being fixed.
+  #
+  # The Platform side opens a pull request rather than committing; verify.yml
+  # there is what actually decides. Failure here is deliberately not fatal to
+  # the release: the tag is real and resolvable whatever happens next, and a
+  # missed bump is recoverable by re-running this job or bumping by hand.
+  dispatch:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tell the Platform there is a new version
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::PLATFORM_DISPATCH_TOKEN is not set — the Platform bump must be done by hand."
+            exit 0
+          fi
+
+          gh api repos/mosaic-media/platform/dispatches \
+            --method POST \
+            --field event_type=core-module-release \
+            --field "client_payload[module]=github.com/${GITHUB_REPOSITORY}" \
+            --field "client_payload[version]=${GITHUB_REF_NAME}"
