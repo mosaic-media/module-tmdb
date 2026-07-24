@@ -393,6 +393,14 @@ func (f *fakeContent) AttachContentPart(_ context.Context, cmd v1.AttachContentP
 	return v1.AttachContentPartResult{Part: p}, nil
 }
 
+// SetContentArtwork records nothing: neither module fills the artwork role, so
+// this exists to satisfy v1.ContentService and would be a lie if it pretended to
+// store something. It was missing because this module sat two SDK releases
+// behind, where the method did not exist yet.
+func (f *fakeContent) SetContentArtwork(_ context.Context, _ v1.SetContentArtworkCommand) (v1.SetContentArtworkResult, error) {
+	return v1.SetContentArtworkResult{}, nil
+}
+
 func (f *fakeContent) BindContentSource(_ context.Context, cmd v1.BindContentSourceCommand) (v1.BindContentSourceResult, error) {
 	f.binds = append(f.binds, cmd)
 	b := v1.SourceBinding{
