@@ -93,6 +93,11 @@ func fakeTMDB() *httptest.Server {
 				map[string]any{"name": "Ana de Armas", "character": "Joi", "profile_path": "/ana.jpg", "order": 2},
 				map[string]any{"name": "Ryan Gosling", "character": "K", "profile_path": "/ryan.jpg", "order": 0},
 				map[string]any{"name": "Harrison Ford", "character": "Rick Deckard", "profile_path": "/harrison.jpg", "order": 1},
+			}, "crew": []any{
+				// The crew array is most of what TMDB returns under `credits`,
+				// and only the directing credit is wanted from it.
+				map[string]any{"name": "Roger Deakins", "job": "Director of Photography", "department": "Camera"},
+				map[string]any{"name": "Denis Villeneuve", "job": "Director", "department": "Directing"},
 			}},
 			"images": map[string]any{"logos": []any{
 				map[string]any{"file_path": "/neutral.png", "iso_639_1": nil, "vote_average": 9},
@@ -228,8 +233,17 @@ func fakeTMDB() *httptest.Server {
 				map[string]any{"season_number": 2, "episode_count": 1},
 				map[string]any{"season_number": 3, "episode_count": 0},
 			},
-			"credits": map[string]any{"cast": []any{map[string]any{"name": "Bryan Cranston", "character": "Walter White", "profile_path": "/bryan.jpg", "order": 0}}},
-			"images":  map[string]any{"logos": []any{}},
+			// TMDB does not put "Creator" in credits.crew — a series' creators
+			// are a top-level field, which is why reading only the crew array
+			// finds none for any series at all.
+			"created_by": []any{map[string]any{"name": "Vince Gilligan"}},
+			"credits": map[string]any{"cast": []any{map[string]any{"name": "Bryan Cranston", "character": "Walter White", "profile_path": "/bryan.jpg", "order": 0}}, "crew": []any{
+				// Gilligan directed the pilot as well as creating the show, so
+				// he appears twice upstream and must appear once here.
+				map[string]any{"name": "Vince Gilligan", "job": "Director", "department": "Directing"},
+				map[string]any{"name": "Adam Bernstein", "job": "Director", "department": "Directing"},
+			}},
+			"images": map[string]any{"logos": []any{}},
 			// TVDB reports television only, which is why a film's external ids
 			// above carry no tvdb_id.
 			"external_ids": map[string]any{"imdb_id": "tt0903747", "tvdb_id": 81189},
@@ -243,13 +257,13 @@ func fakeTMDB() *httptest.Server {
 
 	mux.HandleFunc("/3/tv/1396/season/0", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"episodes": []any{
-			map[string]any{"episode_number": 1, "name": "Good Cop Bad Cop", "overview": "A special.", "still_path": "/s0e1.jpg", "air_date": "2009-02-17"},
+			map[string]any{"episode_number": 1, "name": "Good Cop Bad Cop", "overview": "A special.", "still_path": "/s0e1.jpg", "air_date": "2009-02-17", "runtime": 4},
 		}})
 	})
 	mux.HandleFunc("/3/tv/1396/season/1", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"episodes": []any{
-			map[string]any{"episode_number": 2, "name": "Cat's in the Bag...", "overview": "Second.", "still_path": "/s1e2.jpg", "air_date": "2008-01-27"},
-			map[string]any{"episode_number": 1, "name": "Pilot", "overview": "First.", "still_path": "/s1e1.jpg", "air_date": "2008-01-20"},
+			map[string]any{"episode_number": 2, "name": "Cat's in the Bag...", "overview": "Second.", "still_path": "/s1e2.jpg", "air_date": "2008-01-27", "runtime": 48},
+			map[string]any{"episode_number": 1, "name": "Pilot", "overview": "First.", "still_path": "/s1e1.jpg", "air_date": "2008-01-20", "runtime": 58},
 		}})
 	})
 	mux.HandleFunc("/3/tv/1396/season/2", func(w http.ResponseWriter, r *http.Request) {

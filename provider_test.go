@@ -239,6 +239,54 @@ func TestMetadataForASeriesPreviewsEpisodesInOrder(t *testing.T) {
 	if !strings.HasSuffix(meta.Episodes[1].Thumbnail, "/s1e1.jpg") {
 		t.Errorf("pilot thumbnail = %q, want the still URL", meta.Episodes[1].Thumbnail)
 	}
+
+	// Per episode, from the season endpoint — not the series' declared
+	// episode_run_time, which is 49 here and wrong for both of these.
+	if got := meta.Episodes[1].RuntimeMinutes; got != 58 {
+		t.Errorf("pilot runtime = %d, want 58 from the episode and not 49 from the series", got)
+	}
+	if got := meta.Episodes[2].RuntimeMinutes; got != 48 {
+		t.Errorf("second episode runtime = %d, want 48", got)
+	}
+
+	// A series' creators come from the top-level created_by, and its directors
+	// from credits.crew. Gilligan is in both upstream and must appear once.
+	if len(meta.Crew) != 2 {
+		t.Fatalf("crew = %d (%v), want 2", len(meta.Crew), meta.Crew)
+	}
+	if meta.Crew[0].Name != "Vince Gilligan" || meta.Crew[0].Role != "Creator" {
+		t.Errorf("first crew credit = %q/%q, want Vince Gilligan/Creator", meta.Crew[0].Name, meta.Crew[0].Role)
+	}
+	if meta.Crew[1].Name != "Adam Bernstein" || meta.Crew[1].Role != "Director" {
+		t.Errorf("second crew credit = %q/%q, want Adam Bernstein/Director", meta.Crew[1].Name, meta.Crew[1].Role)
+	}
+}
+
+func TestMetadataForAFilmCarriesTheDirectorAndNoOtherCrew(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	meta, err := capability.Metadata(context.Background(), v1.MetadataRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: movieRef("335984"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	// The crew array is mostly people no detail screen names. Only the
+	// directing credit is taken; the cinematographer is not a bug, it is the
+	// rest of the array.
+	if len(meta.Crew) != 1 {
+		t.Fatalf("crew = %d (%v), want 1", len(meta.Crew), meta.Crew)
+	}
+	if meta.Crew[0].Name != "Denis Villeneuve" || meta.Crew[0].Role != "Director" {
+		t.Errorf("crew credit = %q/%q, want Denis Villeneuve/Director", meta.Crew[0].Name, meta.Crew[0].Role)
+	}
+	// A crew credit carries no photo: TMDB has profile paths for crew and
+	// nothing renders them.
+	if meta.Crew[0].Photo != "" {
+		t.Errorf("crew photo = %q, want none", meta.Crew[0].Photo)
+	}
 }
 
 func TestMetadataForAnUnknownTitleErrors(t *testing.T) {

@@ -43,6 +43,7 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		v1.String("native_id", req.Ref.NativeID),
 		v1.Bool("has_logo", title.Logo != ""),
 		v1.Int("cast", len(title.Cast)),
+		v1.Int("crew", len(title.Crew)),
 		v1.Int("episodes", len(title.Episodes)))
 
 	return v1.ContentMetadata{
@@ -59,6 +60,7 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		Rating:        title.Rating,
 		Runtime:       title.Runtime,
 		Cast:          castOf(title.Cast),
+		Crew:          crewCredits(title.Crew),
 		Trailers:      trailersFrom(title.Trailers),
 		Similar:       relatedFrom(title.Similar),
 		Collection:    collectionFrom(title.Collection),
@@ -149,6 +151,20 @@ func castOf(credits []Credit) []v1.Person {
 	return out
 }
 
+// crewCredits maps the above-the-line credits onto the SDK's Person, with the
+// job where a cast member's character goes. No photo: TMDB returns profile paths
+// for crew too, and nothing renders them — a crew credit is a line of text.
+func crewCredits(credits []Credit) []v1.Person {
+	if len(credits) == 0 {
+		return nil
+	}
+	out := make([]v1.Person, 0, len(credits))
+	for _, c := range credits {
+		out = append(out, v1.Person{Name: c.Name, Role: c.Job})
+	}
+	return out
+}
+
 // episodesOf maps the episode list onto the SDK's read-only preview projection.
 // It is deliberately not the materialised tree — Import builds that — but it is
 // what lets a user read a series' episode list before deciding to add it
@@ -166,6 +182,11 @@ func episodesOf(episodes []Episode) []v1.EpisodePreview {
 			Overview:  e.Overview,
 			Thumbnail: e.Thumbnail,
 			Released:  e.Released,
+			// Per-episode, from the season endpoint. The series' declared
+			// episode_run_time is a nominal slot length and is wrong for the
+			// episode that runs eighty minutes, which is usually the one someone
+			// is checking the runtime of.
+			RuntimeMinutes: e.Runtime,
 		})
 	}
 	return out

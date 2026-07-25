@@ -460,7 +460,11 @@ type Title struct {
 	Rating        float64
 	Runtime       string
 	Cast          []Credit
-	Trailers      []Trailer
+	// Crew is the handful of above-the-line credits a detail screen names — a
+	// series' creators and a title's directors, in that order. Not the whole crew:
+	// TMDB returns every grip and colourist, and no screen shows them.
+	Crew     []Credit
+	Trailers []Trailer
 	// Similar are TMDB's recommendations — the editorially better of its two
 	// related-titles endpoints. `similar` is derived from shared genres and
 	// keywords and returns markedly worse suggestions.
@@ -501,9 +505,14 @@ type Collection struct {
 
 // Credit is one billed cast member.
 type Credit struct {
-	Name      string
+	Name string
+	// Character is the part a cast member plays. Empty on a crew credit, where
+	// Job carries the equivalent — the two are separate fields because a
+	// consumer renders "as Mark Scout" and "Directed by" differently.
 	Character string
-	Photo     string
+	// Job is a crew credit's role ("Creator", "Director"), empty on a cast one.
+	Job   string
+	Photo string
 }
 
 // Trailer is one promotional video.
@@ -522,6 +531,10 @@ type Episode struct {
 	Overview  string
 	Thumbnail string
 	Released  string
+	// Runtime is the episode's length in minutes, 0 when TMDB does not say. It
+	// is per episode rather than the series' declared episode_run_time, which is
+	// a nominal slot length and wrong for a finale.
+	Runtime int
 }
 
 // The raw TMDB wire shapes. They exist only to be decoded and immediately
@@ -580,8 +593,15 @@ type rawTitle struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"belongs_to_collection"`
+	// CreatedBy is a series' creators. It is a top-level field rather than a
+	// crew job: TMDB does not list "Creator" in `credits.crew`, so a module
+	// reading only the crew array finds none for any series.
+	CreatedBy []struct {
+		Name string `json:"name"`
+	} `json:"created_by"`
 	Credits struct {
 		Cast []rawCast `json:"cast"`
+		Crew []rawCrew `json:"crew"`
 	} `json:"credits"`
 	Images struct {
 		Logos []rawImage `json:"logos"`
@@ -647,6 +667,12 @@ type rawCast struct {
 	Order       int    `json:"order"`
 }
 
+type rawCrew struct {
+	Name       string `json:"name"`
+	Job        string `json:"job"`
+	Department string `json:"department"`
+}
+
 type rawImage struct {
 	FilePath    string  `json:"file_path"`
 	ISO639      string  `json:"iso_639_1"`
@@ -683,6 +709,7 @@ type rawEpisode struct {
 	Overview      string `json:"overview"`
 	StillPath     string `json:"still_path"`
 	AirDate       string `json:"air_date"`
+	Runtime       int    `json:"runtime"`
 }
 
 func (c *Client) episode(r rawEpisode, season int) Episode {
@@ -693,6 +720,7 @@ func (c *Client) episode(r rawEpisode, season int) Episode {
 		Overview:  r.Overview,
 		Thumbnail: c.imageURL(r.StillPath, c.images.still),
 		Released:  r.AirDate,
+		Runtime:   r.Runtime,
 	}
 }
 
@@ -761,6 +789,7 @@ func (c *Client) title(r rawTitle, nativeType string) Title {
 		Rating:        r.VoteAverage,
 		Runtime:       runtimeLabel(r.Runtime, r.EpisodeRunTime),
 		Cast:          credits,
+		Crew:          crewOf(r),
 		Trailers:      trailersOf(r.Videos.Results),
 		Similar:       similar,
 		Watch:         c.watchOf(r),
@@ -769,6 +798,41 @@ func (c *Client) title(r rawTitle, nativeType string) Title {
 	// omitting the field.
 	if r.ExternalIDs.TVDbID > 0 {
 		out.TVDbID = strconv.Itoa(r.ExternalIDs.TVDbID)
+	}
+	return out
+}
+
+// maxCrew caps the above-the-line credits a title carries. A detail screen names
+// the people a viewer would recognise the title by; past three or four the line
+// stops being a credit and becomes a list.
+const maxCrew = 4
+
+// crewOf is the handful of credits worth naming on a detail screen: a series'
+// creators, then its directors.
+//
+// Creators come from the top-level `created_by` and directors from `credits.crew`,
+// because TMDB models the two differently and reading only the second returns
+// nothing at all for a series. Names repeat across both on a show whose creator
+// also directs, so they are deduplicated on the way through — "Created by Ben
+// Stiller · Directed by Ben Stiller" is technically true and reads as a bug.
+func crewOf(r rawTitle) []Credit {
+	out := make([]Credit, 0, maxCrew)
+	seen := make(map[string]bool, maxCrew)
+	add := func(name, job string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] || len(out) >= maxCrew {
+			return
+		}
+		seen[name] = true
+		out = append(out, Credit{Name: name, Job: job})
+	}
+	for _, c := range r.CreatedBy {
+		add(c.Name, "Creator")
+	}
+	for _, c := range r.Credits.Crew {
+		if c.Job == "Director" {
+			add(c.Name, "Director")
+		}
 	}
 	return out
 }
