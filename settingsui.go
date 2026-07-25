@@ -3,6 +3,7 @@ package tmdb
 import (
 	"context"
 
+	"github.com/mosaic-media/contracts/sdui"
 	"github.com/mosaic-media/contracts/ui"
 	v1 "github.com/mosaic-media/sdk/contracts/platform/v1"
 )
@@ -82,14 +83,20 @@ func configureInput(s settings) map[string]any {
 // apiKeySection is the credential form: the current state of the key, a field to
 // set or replace it, and — only when there is one — a control to clear it.
 func apiKeySection(s settings) *ui.Element {
-	// The typed value substitutes for "$value" anywhere in the action, which is
-	// how a text field becomes a configureModule invoke (ADR 0038).
-	pending := s
-	pending.APIKey = "$value"
-	field := ui.Component("SubmitField",
-		ui.Prop("placeholder", "Paste your TMDB API key or read access token…"),
-		ui.Prop("submitLabel", "Save"),
-		ui.OnTap(ui.Invoke("configureModule", configureInput(pending))))
+	// A form: the field writes `apiKey` into the form's scope and submit merges
+	// the scope into the settings document the invoke carries (ADR 0088). The
+	// rest of the document travels in the action, so only what was typed comes
+	// from the scope. This replaces the "$value" substitution.
+	keep := s
+	keep.APIKey = ""
+	field := ui.Form(
+		ui.Vars(sdui.Vars(sdui.Var("apiKey", sdui.VarString, ""))),
+		ui.SubmitLabel("Save"),
+		ui.SubmitAction(ui.Submit(ui.Invoke("configureModule", configureInput(keep)), "settings")),
+		ui.TextInput(
+			ui.Prop("name", "apiKey"),
+			ui.Prop("placeholder", "Paste your TMDB API key or read access token…"),
+			ui.Prop("validators", map[string]any{"required": true})))
 
 	// Three states, and the middle one is the reason this section is not a
 	// one-liner: a user with no key of their own may still have working metadata,
@@ -127,22 +134,34 @@ func apiKeySection(s settings) *ui.Element {
 // localeSection sets the language TMDB is queried in and the region that decides
 // what "in cinemas" means.
 func localeSection(s settings) *ui.Element {
-	pendingLanguage := s
-	pendingLanguage.Language = "$value"
-	pendingRegion := s
-	pendingRegion.Region = "$value"
+	// One form per field, each writing its own name into its own scope and
+	// merging into the settings document the invoke carries (ADR 0088). Two
+	// forms rather than one because the two controls are independent here —
+	// setting a language should not require also restating a region.
+	keepLanguage := s
+	keepLanguage.Language = ""
+	keepRegion := s
+	keepRegion.Region = ""
 
 	return ui.Section("Language and region",
 		labelledRow("Language", s.Language,
-			ui.Component("SubmitField",
-				ui.Prop("placeholder", "Language tag, e.g. en-US or de-DE"),
-				ui.Prop("submitLabel", "Set"),
-				ui.OnTap(ui.Invoke("configureModule", configureInput(pendingLanguage))))),
+			ui.Form(
+				ui.Vars(sdui.Vars(sdui.Var("language", sdui.VarString, ""))),
+				ui.SubmitLabel("Set"),
+				ui.SubmitAction(ui.Submit(ui.Invoke("configureModule", configureInput(keepLanguage)), "settings")),
+				ui.TextInput(
+					ui.Prop("name", "language"),
+					ui.Prop("placeholder", "Language tag, e.g. en-US or de-DE"),
+					ui.Prop("validators", map[string]any{"required": true, "pattern": "^[a-zA-Z]{2}(-[a-zA-Z]{2})?$"})))),
 		labelledRow("Region", regionLabel(s.Region),
-			ui.Component("SubmitField",
-				ui.Prop("placeholder", "Country code, e.g. GB or US"),
-				ui.Prop("submitLabel", "Set"),
-				ui.OnTap(ui.Invoke("configureModule", configureInput(pendingRegion))))))
+			ui.Form(
+				ui.Vars(sdui.Vars(sdui.Var("region", sdui.VarString, ""))),
+				ui.SubmitLabel("Set"),
+				ui.SubmitAction(ui.Submit(ui.Invoke("configureModule", configureInput(keepRegion)), "settings")),
+				ui.TextInput(
+					ui.Prop("name", "region"),
+					ui.Prop("placeholder", "Country code, e.g. GB or US"),
+					ui.Prop("validators", map[string]any{"required": true, "pattern": "^[a-zA-Z]{2}$"})))))
 }
 
 // contentSection carries the adult-results toggle. It is its own section rather
@@ -204,28 +223,39 @@ func catalogSection(s settings) *ui.Element {
 	return ui.Section("Custom catalogs", els...)
 }
 
-// addCatalogField is one "name | query" submit field. The pair is encoded in a
-// single field because a SubmitField submits on its own — two fields would need
-// somewhere to hold the half-finished value between them, and a module's
-// settings screen has no such state.
+// addCatalogField is the add-a-catalog form: a name and a query.
+//
+// It used to be one field holding "name | query", because the control it was
+// built from submitted on its own and two fields would have needed somewhere to
+// hold the half-finished value between them — which a module's settings screen
+// had no way to express. A State scope is exactly that somewhere, so the pair is
+// two fields again (ADR 0087, ADR 0088).
 func addCatalogField(s settings, nativeType, label, placeholder string) *ui.Element {
-	// The typed value lands whole in Name, and settingsFrom splits it on the
-	// first "|" when it reads the document back. One placeholder rather than two:
-	// the runtime substitutes "$value" *everywhere* in the action, so a Name and
-	// a Query placeholder would both receive the entire string.
-	pending := s
-	pending.Catalogs = append(append([]customCatalog{}, s.Catalogs...),
-		customCatalog{Name: "$value", Type: nativeType})
-
+	// Two fields, which is the point: the substitution this replaces filled every
+	// placeholder in an action with the same string, so a name and a query could
+	// not be told apart and had to be crammed into one box separated by a "|".
+	// A form carries two named fields, so the screen asks for two things.
 	return ui.Component("Box",
 		ui.Prop("style", map[string]any{"direction": "column", "gap": 2}),
 		ui.Group(
 			ui.Component("Text", ui.Prop("text", label),
 				ui.Prop("style", map[string]any{"weight": "medium"})),
-			ui.Component("SubmitField",
-				ui.Prop("placeholder", placeholder),
-				ui.Prop("submitLabel", "Add"),
-				ui.OnTap(ui.Invoke("configureModule", configureInput(pending))))))
+			ui.Form(
+				ui.Vars(sdui.Vars(
+					sdui.Var("addCatalogName", sdui.VarString, ""),
+					sdui.Var("addCatalogQuery", sdui.VarString, ""),
+					sdui.Var("addCatalogType", sdui.VarString, nativeType),
+				)),
+				ui.SubmitLabel("Add"),
+				ui.SubmitAction(ui.Submit(ui.Invoke("configureModule", configureInput(s)), "settings")),
+				ui.TextInput(
+					ui.Prop("name", "addCatalogName"),
+					ui.Prop("placeholder", "Name, e.g. Best of 1999"),
+					ui.Prop("validators", map[string]any{"required": true})),
+				ui.TextInput(
+					ui.Prop("name", "addCatalogQuery"),
+					ui.Prop("placeholder", placeholder),
+					ui.Prop("validators", map[string]any{"required": true})))))
 }
 
 // withoutCatalog returns the list with the entry at index removed.

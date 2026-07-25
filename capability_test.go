@@ -288,10 +288,10 @@ func TestSettingsUIRendersTheKeyOnlyMasked(t *testing.T) {
 		t.Fatal("the settings screen does not show the masked key, so a user cannot tell a key is set")
 	}
 
-	// The replace-key field carries the "$value" placeholder rather than the
+	// The replace-key field is a form writing `apiKey` rather than the
 	// current key, so setting a new one does not require echoing the old one.
-	if !strings.Contains(string(resp.UI), "$value") {
-		t.Fatal("the settings screen has no $value placeholder; the key field cannot submit")
+	if !strings.Contains(string(resp.UI), "apiKey") {
+		t.Fatal("the settings screen has no apiKey field; the key cannot be submitted")
 	}
 }
 
@@ -302,7 +302,12 @@ func withoutActions(node any) any {
 	case map[string]any:
 		out := make(map[string]any, len(n))
 		for key, value := range n {
-			if key == "action" {
+			// Both props that carry an Action. `submitAction` joined `action`
+			// when the settings screens became forms: a whole-document write
+			// means every form echoes the stored key back in the action it
+			// submits, which is a known trade, and what this test asserts is
+			// narrower — that the key is never in a property something *draws*.
+			if key == "action" || key == "submitAction" {
 				continue
 			}
 			out[key] = withoutActions(value)

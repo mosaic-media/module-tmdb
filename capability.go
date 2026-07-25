@@ -127,6 +127,22 @@ type settings struct {
 	// Catalogs are the user's own `/discover` queries, each becoming a browsable
 	// catalog beside the built-in ones.
 	Catalogs []customCatalog `json:"catalogs"`
+
+	// AddCatalog* is a pending addition: the one catalog the settings form just
+	// submitted, as a name, a query and a type.
+	//
+	// A form writes named fields into the settings document and cannot append to
+	// a list — the mechanism it replaces could, because it rewrote the whole
+	// document on its way out of the client. So the addition rides as fields and
+	// this module folds it into Catalogs on read, keeping the append here rather
+	// than putting a list operation on the wire for every client to implement.
+	//
+	// It needs no clearing: the form's action carries the already-folded list, so
+	// the next submit's Catalogs already contains the previous addition, and the
+	// fold ignores a duplicate.
+	AddCatalogName  string `json:"addCatalogName"`
+	AddCatalogQuery string `json:"addCatalogQuery"`
+	AddCatalogType  string `json:"addCatalogType"`
 }
 
 // customCatalog is one user-defined discover query. Query is raw TMDB discover
@@ -161,19 +177,41 @@ func settingsFrom(document []byte) (settings, error) {
 	for i := range parsed.Catalogs {
 		parsed.Catalogs[i] = normaliseCatalog(parsed.Catalogs[i])
 	}
+	if add := normaliseCatalog(customCatalog{
+		Name: parsed.AddCatalogName, Query: parsed.AddCatalogQuery, Type: parsed.AddCatalogType,
+	}); add.Name != "" {
+		duplicate := false
+		for _, c := range parsed.Catalogs {
+			if c.Name == add.Name && c.Type == add.Type {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			parsed.Catalogs = append(parsed.Catalogs, add)
+		}
+	}
+	parsed.AddCatalogName, parsed.AddCatalogQuery, parsed.AddCatalogType = "", "", ""
 	return parsed, nil
 }
 
-// normaliseCatalog splits a catalog entered as one "name | query" string into
-// its two parts, and defaults the type.
+// normaliseCatalog defaults a catalog's type and, for documents written before
+// the settings form could carry two fields, splits a "name | query" Name into
+// its two parts.
 //
-// The settings screen has to submit the pair as a single value — a SubmitField
-// submits on its own and there is nowhere to hold a half-finished entry between
-// two of them — so this is where the pair comes apart. It is idempotent: once
-// split, the next write stores the two fields separately and this does nothing.
+// The screen used to submit the pair as one value because the control it was
+// built from submitted on its own, with nowhere to hold a half-finished entry
+// between two of them. It now asks for two fields, so nothing writes the joined
+// shape any more — but documents already stored in it must keep working, which
+// is what the split is for. Idempotent: once split, the two fields are stored
+// separately and this does nothing.
 func normaliseCatalog(c customCatalog) customCatalog {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Query = strings.TrimSpace(c.Query)
+	// A document written before the form could carry two fields may still hold
+	// "name|query" in Name — the workaround for a substitution that filled every
+	// placeholder in an action with the same string. Kept so those documents keep
+	// working; nothing writes this shape any more.
 	if c.Query == "" {
 		if name, query, ok := strings.Cut(c.Name, "|"); ok {
 			c.Name, c.Query = strings.TrimSpace(name), strings.TrimSpace(query)
