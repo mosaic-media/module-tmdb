@@ -141,3 +141,32 @@ jobs:
             --field event_type=core-module-release \
             --field "client_payload[module]=github.com/${GITHUB_REPOSITORY}" \
             --field "client_payload[version]=${GITHUB_REF_NAME}"
+
+      # The bump above moves a pinned version. Whether the current branches of
+      # this module, the SDK, the contracts and the Platform still compile
+      # together is a separate question, and the Platform's graph.yml is what
+      # asks it. A release is the right moment to ask: the branch that just got
+      # tagged is the one the Platform is about to require.
+      #
+      # It deliberately does not wait for the bump PR to merge. The graph check
+      # builds a Go workspace, where no `require` line is read at all, so the
+      # version it would be waiting for cannot change the answer. The payload is
+      # provenance for whoever reads the run — graph.yml takes no input and
+      # always checks every branch in the set.
+      #
+      # Not fatal, for the same reason as the bump: the tag is real and
+      # resolvable whatever happens here, and the check runs daily anyway.
+      - name: Ask the Platform to re-check the repository graph
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::PLATFORM_DISPATCH_TOKEN is not set — no graph check was requested."
+            exit 0
+          fi
+
+          gh api repos/mosaic-media/platform/dispatches \
+            --method POST \
+            --field event_type=graph-check \
+            --field "client_payload[module]=github.com/${GITHUB_REPOSITORY}" \
+            --field "client_payload[version]=${GITHUB_REF_NAME}"
