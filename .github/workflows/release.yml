@@ -120,9 +120,11 @@ jobs:
   # repository, which is the whole thing being fixed.
   #
   # The Platform side opens a pull request rather than committing; verify.yml
-  # there is what actually decides. Failure here is deliberately not fatal to
-  # the release: the tag is real and resolvable whatever happens next, and a
-  # missed bump is recoverable by re-running this job or bumping by hand.
+  # there is what actually decides. The release is already complete by the time
+  # this job runs — the tag and the release object exist, and nothing here can
+  # un-publish them — so a red run costs nothing, and it is how a bump chain
+  # that has stopped working becomes visible. This guard used to warn and exit
+  # 0, which meant an unset token reported green while no bump was ever sent.
   dispatch:
     needs: release
     runs-on: ubuntu-latest
@@ -132,8 +134,8 @@ jobs:
           GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
         run: |
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::PLATFORM_DISPATCH_TOKEN is not set — the Platform bump must be done by hand."
-            exit 0
+            echo "::error::PLATFORM_DISPATCH_TOKEN is not set — no bump was sent; bump the Platform by hand."
+            exit 1
           fi
 
           gh api repos/mosaic-media/platform/dispatches \
@@ -154,15 +156,18 @@ jobs:
       # provenance for whoever reads the run — graph.yml takes no input and
       # always checks every branch in the set.
       #
-      # Not fatal, for the same reason as the bump: the tag is real and
-      # resolvable whatever happens here, and the check runs daily anyway.
+      # Fatal, for the same reason as the bump: the release is already complete,
+      # so a red run un-publishes nothing, and it is the only thing that reports
+      # an unset token. The graph check does run daily on its own schedule, but
+      # a green daily run says nothing about whether this release's dispatch was
+      # ever sent.
       - name: Ask the Platform to re-check the repository graph
         env:
           GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
         run: |
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::PLATFORM_DISPATCH_TOKEN is not set — no graph check was requested."
-            exit 0
+            echo "::error::PLATFORM_DISPATCH_TOKEN is not set — no graph check was requested."
+            exit 1
           fi
 
           gh api repos/mosaic-media/platform/dispatches \
