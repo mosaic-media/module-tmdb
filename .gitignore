@@ -3,3 +3,7 @@
 
 # Editor and IDE state
 .idea/
+.vscode/
+
+# macOS junk
+.DS_Store
