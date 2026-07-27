@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	v1 "github.com/mosaic-media/sdk/contracts/platform/v1"
 )
 
 // Catalogs, and the discover queries behind the user-defined ones.
@@ -39,6 +41,22 @@ type CatalogDecl struct {
 	path string
 	// query is the user's own discover parameters, empty for a built-in.
 	query string
+	// filterable is whether this catalog can be narrowed, and it is a property of
+	// the *endpoint* rather than a policy choice.
+	//
+	// TMDB's list endpoints — `/movie/popular`, `/trending/movie/week` — take no
+	// `with_genres`. Only `/discover` filters, so a narrowed catalog is served by
+	// a discover query that reproduces the same ranking, which is what
+	// discoverQuery below holds. A catalog whose ranking has **no faithful
+	// discover equivalent** declares no filters rather than accepting one and
+	// answering with something adjacent: TMDB's trending is a computed
+	// popularity-over-time ranking that `/discover` cannot express, and a
+	// "Trending · Action" row silently served by raw popularity would be
+	// confidently wrong in the way a user cannot see.
+	filterable bool
+	// discoverQuery is the base query of that equivalent, merged under the
+	// caller's selected filters.
+	discoverQuery string
 }
 
 // Custom is whether this catalog came from a user's settings rather than the
@@ -51,12 +69,26 @@ func (d CatalogDecl) Custom() bool { return strings.HasPrefix(d.ID, customCatalo
 // everything TMDB can answer.
 func builtinCatalogs() []CatalogDecl {
 	return []CatalogDecl{
+		// Trending is TMDB's own popularity-over-time ranking and `/discover`
+		// has no equivalent for it, so it takes no filter — see CatalogDecl.
 		{ID: "trending", Type: typeMovie, Name: "Trending Films", path: "/trending/movie/week"},
 		{ID: "trending", Type: typeTV, Name: "Trending Series", path: "/trending/tv/week"},
-		{ID: "popular", Type: typeMovie, Name: "Popular Films", path: "/movie/popular"},
-		{ID: "popular", Type: typeTV, Name: "Popular Series", path: "/tv/popular"},
-		{ID: "top_rated", Type: typeMovie, Name: "Top Rated Films", path: "/movie/top_rated"},
-		{ID: "top_rated", Type: typeTV, Name: "Top Rated Series", path: "/tv/top_rated"},
+		// Popular and Top Rated are exactly a discover sort, which is why these
+		// four are the ones that filter.
+		{ID: "popular", Type: typeMovie, Name: "Popular Films", path: "/movie/popular",
+			filterable: true, discoverQuery: "sort_by=popularity.desc"},
+		{ID: "popular", Type: typeTV, Name: "Popular Series", path: "/tv/popular",
+			filterable: true, discoverQuery: "sort_by=popularity.desc"},
+		// The vote-count floor is TMDB's own published equivalent for its top-rated
+		// lists, and it is load bearing: without it the first page is titles with
+		// one ten-out-of-ten vote, which is a worse list wearing the same name.
+		{ID: "top_rated", Type: typeMovie, Name: "Top Rated Films", path: "/movie/top_rated",
+			filterable: true, discoverQuery: "sort_by=vote_average.desc&vote_count.gte=300"},
+		{ID: "top_rated", Type: typeTV, Name: "Top Rated Series", path: "/tv/top_rated",
+			filterable: true, discoverQuery: "sort_by=vote_average.desc&vote_count.gte=200"},
+		// In Cinemas and On The Air are date windows TMDB computes and does not
+		// publish the bounds of. A discover query with a window this module chose
+		// would be a different list under the same name, so neither filters.
 		{ID: "now_playing", Type: typeMovie, Name: "In Cinemas", path: "/movie/now_playing"},
 		{ID: "on_the_air", Type: typeTV, Name: "On The Air", path: "/tv/on_the_air"},
 	}
@@ -85,6 +117,14 @@ func catalogsFor(custom []customCatalog) []CatalogDecl {
 			Name:  name,
 			path:  "/discover/" + nativeType,
 			query: query,
+			// A custom catalog is *already* a discover query, so it filters with no
+			// equivalent to find. The user's own parameters are the base, and a
+			// selected filter narrows within them rather than replacing them — a
+			// user who wrote `with_original_language=fr` and then picks Thriller
+			// gets French thrillers, which is the only reading that does not
+			// discard something they typed.
+			filterable:    true,
+			discoverQuery: query,
 		})
 	}
 	return out
@@ -129,22 +169,53 @@ func (c *Client) Catalogs() []CatalogDecl { return c.catalogs }
 // pages in twenties, so it is converted rather than passed through; an offset
 // that lands mid-page rounds down, which repeats at most nineteen items rather
 // than skipping any.
-func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string, skip int) ([]Preview, error) {
+//
+// filters are already-validated discover parameters (see Capability.CatalogItems
+// — this method trusts them because the caller checked them against the same
+// declaration the consumer built its control from). A non-empty set switches the
+// request from the catalog's list endpoint to its discover equivalent, because
+// TMDB's list endpoints do not filter.
+//
+// It reports whether another page exists, which TMDB answers exactly:
+// `total_pages` is in every list and discover response, so this is the strong
+// form of the SDK's HasMore rather than an inference from a full page.
+func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string, skip int, filters map[string]string) ([]Preview, bool, error) {
 	decl, ok := c.findCatalog(catalogID, nativeType)
 	if !ok {
-		return nil, fmt.Errorf("unknown catalog %q for type %q", catalogID, nativeType)
+		return nil, false, fmt.Errorf("unknown catalog %q for type %q", catalogID, nativeType)
+	}
+
+	path := decl.path
+	base := decl.query
+	if len(filters) > 0 {
+		if !decl.filterable {
+			return nil, false, fmt.Errorf("catalog %q cannot be narrowed", decl.Name)
+		}
+		path = "/discover/" + decl.Type
+		base = decl.discoverQuery
 	}
 
 	params := url.Values{}
-	if decl.query != "" {
+	if base != "" {
 		// Already sanitised when the declaration was built, so a reserved
 		// parameter cannot reach here and the module's own values below win by
 		// being set afterwards.
-		parsed, err := url.ParseQuery(decl.query)
+		parsed, err := url.ParseQuery(base)
 		if err != nil {
-			return nil, fmt.Errorf("catalog %q has an unusable query: %w", decl.Name, err)
+			return nil, false, fmt.Errorf("catalog %q has an unusable query: %w", decl.Name, err)
 		}
 		params = parsed
+	}
+	for name, value := range filters {
+		params.Set(name, value)
+	}
+	// `with_watch_providers` is meaningless without a region, and this module
+	// declines to offer that filter at all when none is set — so reaching here
+	// with one means a region exists. Setting it explicitly rather than relying
+	// on the block below keeps the two independent: `region` scopes release
+	// dates, `watch_region` scopes availability, and TMDB reads them separately.
+	if _, ok := filters[filterWatchProvider]; ok && c.region != "" {
+		params.Set("watch_region", c.region)
 	}
 	params.Set("page", strconv.Itoa(skip/catalogPage+1))
 	params.Set("include_adult", strconv.FormatBool(c.adult))
@@ -153,10 +224,12 @@ func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string,
 	}
 
 	var resp struct {
-		Results []rawPreview `json:"results"`
+		Page       int          `json:"page"`
+		TotalPages int          `json:"total_pages"`
+		Results    []rawPreview `json:"results"`
 	}
-	if err := c.get(ctx, decl.path, params, &resp); err != nil {
-		return nil, err
+	if err := c.get(ctx, path, params, &resp); err != nil {
+		return nil, false, err
 	}
 
 	out := make([]Preview, 0, len(resp.Results))
@@ -167,7 +240,57 @@ func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string,
 		// keeps a single path.
 		out = append(out, c.preview(r, decl.Type))
 	}
+	return out, resp.Page > 0 && resp.Page < resp.TotalPages, nil
+}
+
+// narrowingFor validates a caller's selected filters against what a catalog
+// actually declared, and returns them as discover parameters.
+//
+// **An unrecognised name or value is an error, not something to drop.** The SDK
+// is explicit that a provider must decline a filter it does not understand
+// rather than answering with the unfiltered page, because a silently widened
+// query returns a plausible list for a question nobody asked — and unlike an
+// absent control, a user cannot see it. The same reasoning is why the value is
+// checked against the declared options rather than passed through: `with_genres`
+// accepts arbitrary text and TMDB answers an unknown genre id with an unfiltered
+// page, so passing it on would produce exactly the failure this refuses.
+func narrowingFor(decl CatalogDecl, declared []v1.CatalogFilter, selected map[string]string) (map[string]string, error) {
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	if !decl.filterable {
+		return nil, fmt.Errorf("catalog %q cannot be narrowed", decl.Name)
+	}
+	out := make(map[string]string, len(selected))
+	for name, value := range selected {
+		filter, ok := findFilter(declared, name)
+		if !ok {
+			return nil, fmt.Errorf("catalog %q has no filter named %q", decl.Name, name)
+		}
+		if !hasOption(filter.Options, value) {
+			return nil, fmt.Errorf("filter %q on catalog %q has no option %q", name, decl.Name, value)
+		}
+		out[name] = value
+	}
 	return out, nil
+}
+
+func findFilter(filters []v1.CatalogFilter, name string) (v1.CatalogFilter, bool) {
+	for _, f := range filters {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return v1.CatalogFilter{}, false
+}
+
+func hasOption(options []v1.CatalogFilterOption, value string) bool {
+	for _, o := range options {
+		if o.Value == value {
+			return true
+		}
+	}
+	return false
 }
 
 // findCatalog resolves a catalog declaration by its id and type. Two catalogs

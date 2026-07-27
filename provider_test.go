@@ -942,3 +942,177 @@ func contains(got, want any) bool {
 		return got == want
 	}
 }
+
+// Faceting: what a catalog says it can be narrowed by, and what happens when it
+// is narrowed by something it did not say.
+
+func TestFilterableCatalogsDeclareTheirOptions(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	resp, err := capability.Catalogs(context.Background(), v1.CatalogsRequest{
+		Caller:   v1.CallerFromSession("s-1"),
+		Settings: []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`),
+	})
+	if err != nil {
+		t.Fatalf("Catalogs: %v", err)
+	}
+
+	byKey := map[string]v1.Catalog{}
+	for _, c := range resp.Catalogs {
+		byKey[c.ID+"/"+c.NativeType] = c
+	}
+
+	// **Trending declares nothing, and that is the assertion worth having.**
+	// TMDB's trending is a computed ranking `/discover` cannot reproduce, so the
+	// honest answer is an absent control rather than a chip row that quietly
+	// serves plain popularity under the word "Trending".
+	if got := byKey["trending/movie"].Filters; len(got) != 0 {
+		t.Errorf("trending declared %d filters; it has no faithful discover equivalent and must declare none", len(got))
+	}
+	if got := byKey["now_playing/movie"].Filters; len(got) != 0 {
+		t.Errorf("in-cinemas declared %d filters; its date window is TMDB's and unpublished", len(got))
+	}
+
+	popular := byKey["popular/movie"]
+	if len(popular.Filters) != 2 {
+		t.Fatalf("popular films declared %d filters, want genre and streaming service: %+v", len(popular.Filters), popular.Filters)
+	}
+	genre := popular.Filters[0]
+	if genre.Name != "with_genres" || genre.Label != "Genre" {
+		t.Errorf("genre filter = %q/%q, want with_genres/Genre", genre.Name, genre.Label)
+	}
+	// Value and label are separate because TMDB addresses a genre by id and
+	// names it in words; carrying one would force an unreadable control or a
+	// reverse lookup per request.
+	if len(genre.Options) != 2 {
+		t.Fatalf("genre options = %+v, want two (the id-less entry must be dropped)", genre.Options)
+	}
+	if genre.Options[0].Value != "28" || genre.Options[0].Label != "Action" {
+		t.Errorf("first genre option = %+v, want 28/Action", genre.Options[0])
+	}
+
+	// display_priority, not alphabetical: the services a user is likely to hold
+	// come first, and the fake returns them out of order so a missing sort fails.
+	services := popular.Filters[1]
+	if services.Name != "with_watch_providers" || len(services.Options) != 2 {
+		t.Fatalf("streaming filter = %+v", services)
+	}
+	if services.Options[0].Label != "Netflix" {
+		t.Errorf("first service = %q, want Netflix by display priority", services.Options[0].Label)
+	}
+
+	// A series catalog gets television's genre list, not film's.
+	if got := byKey["popular/tv"].Filters[0].Options; len(got) != 1 || got[0].Label != "Drama" {
+		t.Errorf("tv genre options = %+v, want television's own list", got)
+	}
+}
+
+func TestNoRegionMeansNoStreamingServiceFilter(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+
+	resp, err := capability.Catalogs(context.Background(), v1.CatalogsRequest{
+		Caller: v1.CallerFromSession("s-1"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Catalogs: %v", err)
+	}
+	for _, c := range resp.Catalogs {
+		for _, f := range c.Filters {
+			if f.Name == "with_watch_providers" {
+				t.Fatalf("catalog %q/%q offered a streaming-service filter with no region configured; "+
+					"availability is national and a filter that cannot be scoped must not be offered",
+					c.ID, c.NativeType)
+			}
+		}
+	}
+}
+
+func TestANarrowedCatalogIsServedByDiscover(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	settings := []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`)
+
+	// Unnarrowed, this catalog is the list endpoint, which reports three pages.
+	plain, err := capability.CatalogItems(context.Background(), v1.CatalogItemsRequest{
+		Caller: v1.CallerFromSession("s-1"), CatalogID: "popular", NativeType: "movie", Settings: settings,
+	})
+	if err != nil {
+		t.Fatalf("CatalogItems: %v", err)
+	}
+	if !plain.HasMore {
+		t.Error("HasMore = false on page 1 of 3; TMDB reports total_pages, so this is the exact statement")
+	}
+
+	// Narrowed, it is the discover equivalent — which the fake serves as the
+	// last page, so the two cannot be confused with each other.
+	narrowed, err := capability.CatalogItems(context.Background(), v1.CatalogItemsRequest{
+		Caller: v1.CallerFromSession("s-1"), CatalogID: "popular", NativeType: "movie",
+		Settings: settings, Filters: map[string]string{"with_genres": "878"},
+	})
+	if err != nil {
+		t.Fatalf("narrowed CatalogItems: %v", err)
+	}
+	if len(narrowed.Items) != 1 || narrowed.Items[0].Title != "Blade Runner 2049" {
+		t.Fatalf("narrowed items = %+v", narrowed.Items)
+	}
+	if narrowed.HasMore {
+		t.Error("HasMore = true on the last discover page")
+	}
+}
+
+// A filter the catalog never declared, and a value the filter never offered,
+// are both refused. **Answering with the unfiltered page would be the worse
+// failure**: it returns a plausible list for a question nobody asked, and unlike
+// a missing control a user cannot see it.
+func TestAnUndeclaredNarrowingIsRefused(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	settings := []byte(`{"apiKey":"0123456789abcdef0123456789abcdef","region":"GB"}`)
+
+	cases := []struct {
+		name      string
+		catalogID string
+		filters   map[string]string
+	}{
+		{"a catalog that cannot be narrowed", "trending", map[string]string{"with_genres": "28"}},
+		{"a filter the catalog does not have", "popular", map[string]string{"with_keywords": "9715"}},
+		{"a value the filter does not offer", "popular", map[string]string{"with_genres": "99999"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := capability.CatalogItems(context.Background(), v1.CatalogItemsRequest{
+				Caller: v1.CallerFromSession("s-1"), CatalogID: tc.catalogID, NativeType: "movie",
+				Settings: settings, Filters: tc.filters,
+			})
+			if err == nil {
+				t.Fatal("no error; a narrowing this module cannot honour must be declined rather than ignored")
+			}
+		})
+	}
+}
+
+// The library half: a work carries its genres so a facet can be answered without
+// a round trip per title.
+func TestImportStoresGenresOnTheWork(t *testing.T) {
+	server := fakeTMDB()
+	defer server.Close()
+	capability := tmdb.New(redirect(server))
+	content := newFakeContent()
+
+	result, err := capability.Import(context.Background(), content, v1.ImportRequest{
+		Caller: v1.CallerFromSession("s-1"), Ref: seriesRef("1396"), Settings: keySettings(),
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	got := content.nodes[result.WorkID].Genres
+	if len(got) != 1 || got[0] != "Drama" {
+		t.Fatalf("work genres = %v, want TMDB's own [Drama] stored on the node", got)
+	}
+}

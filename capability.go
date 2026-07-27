@@ -96,10 +96,14 @@ var (
 // whatever each deployment configures.
 type Capability struct {
 	httpClient *http.Client
-	// images caches TMDB's published CDN layout across invocations. It is the one
-	// piece of state here, and it is on the Capability rather than the Client
-	// because a Client is per-invocation and this never changes.
+	// images caches TMDB's published CDN layout across invocations. It is on the
+	// Capability rather than the Client because a Client is per-invocation and
+	// this never changes.
 	images imageConfigCache
+	// facets caches the genre and watch-provider option lists a catalog declares
+	// its filters from, for the same reason and on the same terms. Keyed by
+	// native type and region, because the watch-provider list is national.
+	facets facetCache
 }
 
 // New builds the capability over an HTTP client (nil for a default). The
@@ -390,6 +394,12 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 		// the metadata the import already holds, so storing it costs nothing and
 		// saves a provider round trip for every card that renders this title.
 		Artwork: v1.Artwork{Poster: title.Poster, Backdrop: title.Backdrop, Logo: title.Logo},
+		// Genres, for the same reason and on the same terms as artwork above: a
+		// facet is a question asked across the whole library, and it cannot be
+		// answered by a round trip per title. TMDB's own words, not mapped onto
+		// a Mosaic vocabulary — the Platform reconciles nothing here, and says
+		// so (SDK v0.25.0).
+		Genres: title.Genres,
 	})
 	if err != nil {
 		return v1.ImportResult{}, fmt.Errorf("create work: %w", err)

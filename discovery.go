@@ -58,9 +58,20 @@ func (c *Capability) Catalogs(ctx context.Context, req v1.CatalogsRequest) (v1.C
 	decls := client.Catalogs()
 	catalogs := make([]v1.Catalog, 0, len(decls))
 	for _, d := range decls {
-		catalogs = append(catalogs, v1.Catalog{ID: d.ID, NativeType: d.Type, Name: d.Name})
+		cat := v1.Catalog{ID: d.ID, NativeType: d.Type, Name: d.Name}
+		if d.filterable {
+			cat.Filters = c.facetsFor(ctx, client, d.Type).filters()
+		}
+		catalogs = append(catalogs, cat)
 	}
 	return v1.CatalogsResponse{Catalogs: catalogs}, nil
+}
+
+// facetsFor resolves the filter option lists for one native type, through the
+// cache so a screen full of catalogs costs one fetch per type rather than one
+// per row.
+func (c *Capability) facetsFor(ctx context.Context, client *Client, nativeType string) facets {
+	return c.facets.get(ctx, nativeType, client.region, client.fetchFacets)
 }
 
 // CatalogItems lists one collection's entries as virtual candidates (ADR 0028).
@@ -72,7 +83,24 @@ func (c *Capability) CatalogItems(ctx context.Context, req v1.CatalogItemsReques
 		return v1.CatalogItemsResponse{}, err
 	}
 
-	previews, err := client.CatalogItems(ctx, req.CatalogID, req.NativeType, req.Skip)
+	// The selection is checked against the *same declaration* Catalogs handed
+	// out, rather than trusted or silently dropped. A filter this module does
+	// not recognise is refused here — see narrowingFor for why answering with
+	// the unfiltered page would be the worse failure.
+	decl, ok := client.findCatalog(req.CatalogID, req.NativeType)
+	if !ok {
+		return v1.CatalogItemsResponse{}, fmt.Errorf("unknown TMDB catalog %q for type %q", req.CatalogID, req.NativeType)
+	}
+	var declared []v1.CatalogFilter
+	if decl.filterable && len(req.Filters) > 0 {
+		declared = c.facetsFor(ctx, client, decl.Type).filters()
+	}
+	narrowing, err := narrowingFor(decl, declared, req.Filters)
+	if err != nil {
+		return v1.CatalogItemsResponse{}, err
+	}
+
+	previews, hasMore, err := client.CatalogItems(ctx, req.CatalogID, req.NativeType, req.Skip, narrowing)
 	if err != nil {
 		return v1.CatalogItemsResponse{}, fmt.Errorf("list TMDB catalog items: %w", err)
 	}
@@ -83,5 +111,5 @@ func (c *Capability) CatalogItems(ctx context.Context, req v1.CatalogItemsReques
 			Ref: refFrom(p), Title: p.Title, Year: p.Year, Poster: p.Poster,
 		})
 	}
-	return v1.CatalogItemsResponse{Items: items}, nil
+	return v1.CatalogItemsResponse{Items: items, HasMore: hasMore}, nil
 }

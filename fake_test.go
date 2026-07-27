@@ -209,9 +209,12 @@ func fakeTMDB() *httptest.Server {
 			writeJSON(w, body)
 		}
 	}
-	mux.HandleFunc("/3/discover/movie", discover(map[string]any{"results": []any{
-		map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04", "poster_path": "/poster.jpg"},
-	}}))
+	mux.HandleFunc("/3/discover/movie", discover(map[string]any{
+		"page": 2, "total_pages": 2,
+		"results": []any{
+			map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04", "poster_path": "/poster.jpg"},
+		},
+	}))
 	mux.HandleFunc("/3/discover/tv", discover(map[string]any{"results": []any{
 		map[string]any{"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20", "poster_path": "/bb.jpg"},
 	}}))
@@ -275,6 +278,46 @@ func fakeTMDB() *httptest.Server {
 	})
 	mux.HandleFunc("/3/tv/1396/season/3", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "season 3 must never be requested: it declares no episodes", http.StatusTeapot)
+	})
+
+	// The option lists a catalog declares its filters from. Genres are versioned
+	// data behind an endpoint rather than a constant, which is why the module
+	// fetches them; the fake answers both types so a tv catalog's declaration is
+	// not silently a movie's.
+	mux.HandleFunc("/3/genre/movie/list", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"genres": []any{
+			map[string]any{"id": 28, "name": "Action"},
+			map[string]any{"id": 878, "name": "Science Fiction"},
+			// A malformed entry, which must be dropped rather than declared: an
+			// option with no value is one a consumer can select and nothing can
+			// serve.
+			map[string]any{"id": 0, "name": "Broken"},
+		}})
+	})
+	mux.HandleFunc("/3/genre/tv/list", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"genres": []any{
+			map[string]any{"id": 18, "name": "Drama"},
+		}})
+	})
+	mux.HandleFunc("/3/watch/providers/movie", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("watch_region") == "" {
+			http.Error(w, "availability is national; watch_region is required", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"results": []any{
+			// Out of priority order, so the module's own sort is exercised.
+			map[string]any{"provider_id": 9, "provider_name": "Prime Video", "display_priority": 2},
+			map[string]any{"provider_id": 8, "provider_name": "Netflix", "display_priority": 1},
+		}})
+	})
+
+	mux.HandleFunc("/3/movie/popular", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"page": 1, "total_pages": 3,
+			"results": []any{
+				map[string]any{"id": 335984, "title": "Blade Runner 2049", "release_date": "2017-10-04", "poster_path": "/poster.jpg"},
+			},
+		})
 	})
 
 	mux.HandleFunc("/3/trending/movie/week", func(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +421,7 @@ func (f *fakeContent) AddContentWork(_ context.Context, cmd v1.AddContentWorkCom
 		ID: id, WorkID: id, Kind: v1.NodeWork,
 		MediaType: cmd.MediaType, Title: cmd.Title, Status: v1.NodeActive,
 		ExternalIDs: cmd.ExternalIDs, Attributes: cmd.Attributes, Artwork: cmd.Artwork,
+		Genres: cmd.Genres,
 	}
 	f.put(n)
 	return v1.AddContentWorkResult{Work: n}, nil
