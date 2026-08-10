@@ -9,7 +9,7 @@ import (
 )
 
 // SettingsUI renders the module's own settings screen as SDUI (RoleSettingsUI,
-// ADR 0038): set or replace the API key, choose a language and region, toggle
+// sdk#4): set or replace the API key, choose a language and region, toggle
 // adult results, and read the attribution TMDB's terms require.
 //
 // This role is not optional decoration for this module the way it is for one
@@ -49,14 +49,14 @@ func (c *Capability) SettingsUI(ctx context.Context, req v1.SettingsUIRequest) (
 // it here, so a change to one field never silently drops another.
 //
 // **The whole document, including the API key, is what a control has to carry,
-// and that is a gap in ADR 0021 rather than a choice made here.**
+// and that is a gap in platform#17 rather than a choice made here.**
 // configureModule *replaces* the stored document; there is no partial update. So
 // a module with a secret setting must echo that secret back through the client
 // on every control that changes anything else, or setting a language would erase
 // the key. The consequence is that the credential appears inside the action
 // payloads of this screen — reaching only the admin who passed
 // `module.configure`, but bypassing the Platform's redaction classes
-// (ADR 0056), which cannot see inside a module's opaque settings document.
+// (platform#34), which cannot see inside a module's opaque settings document.
 //
 // What the SDK is missing is either a merge semantic on configureModule or a
 // write-only settings field. Recorded as a finding rather than worked around:

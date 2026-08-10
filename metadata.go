@@ -9,12 +9,12 @@ import (
 
 // Metadata resolves full descriptive detail for a ref (RoleMetadata). It backs
 // the detail screen for both a virtual result and an in-library node, and it is
-// the detail Import draws on (ADR 0027, ADR 0034).
+// the detail Import draws on (sdk#2, sdk#3).
 //
 // This is the role the module exists for. Everything it returns that a Stremio
 // meta addon also returns is a convenience; the two fields that are not — the
 // clearlogo and the cast headshots and character names — are the recorded gaps
-// (ADR 0034) that no addon protocol carries, and they are why a metadata module
+// (sdk#3) that no addon protocol carries, and they are why a metadata module
 // was worth building rather than configuring another addon.
 func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.ContentMetadata, error) {
 	client, err := c.clientFrom(ctx, req.Settings)
@@ -32,7 +32,7 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		return v1.ContentMetadata{}, fmt.Errorf("fetch TMDB detail: %w", err)
 	}
 
-	// Through the SDK's ambient telemetry rather than a print (ADR 0059): this
+	// Through the SDK's ambient telemetry rather than a print (sdk#5): this
 	// lands in the Platform's records, attributed to this module and correlated
 	// with the request that caused it. What is worth recording is which of the
 	// expensive-to-obtain fields actually arrived — a detail screen missing its
@@ -93,7 +93,7 @@ func watchFrom(watch *WatchAvailability) *v1.WatchAvailability {
 
 // relatedFrom maps previews onto the SDK's RelatedItem. InLibrary and NodeID are
 // left zero: unioning a virtual list against the library is the Platform's job,
-// not a provider's (ADR 0028).
+// not a provider's (platform#18).
 func relatedFrom(previews []Preview) []v1.RelatedItem {
 	if len(previews) == 0 {
 		return nil
@@ -168,7 +168,7 @@ func crewCredits(credits []Credit) []v1.Person {
 // episodesOf maps the episode list onto the SDK's read-only preview projection.
 // It is deliberately not the materialised tree — Import builds that — but it is
 // what lets a user read a series' episode list before deciding to add it
-// (ADR 0034).
+// (sdk#3).
 func episodesOf(episodes []Episode) []v1.EpisodePreview {
 	if len(episodes) == 0 {
 		return nil

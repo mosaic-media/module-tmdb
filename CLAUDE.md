@@ -1,7 +1,7 @@
 # Claude Instructions — module-tmdb
 
 Mosaic's first-party TMDB metadata module. It is a **core module**
-([ADR 0062](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0062-two-module-tiers.md))
+([platform#3](https://github.com/mosaic-media/platform/blob/main/docs/adr/0003-platform-as-execution-kernel.md))
 under the *guarantee* clause — Mosaic is not Mosaic without a way to identify and
 find content — which means it is compiled into the Platform binary by Mosaic's
 CI, first-party, and part of a small closed set.
@@ -21,14 +21,14 @@ So the boundary discipline is *stricter* here, not looser:
   [`contracts`](https://github.com/mosaic-media/contracts) and the standard library.**
   `boundary_test.go` parses every import and fails on anything else. `sdui` is
   allowed because this module authors its own settings screen
-  ([ADR 0038](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0038-module-contributed-settings-ui.md)).
+  ([sdk#4](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0004-module-contributed-settings-ui.md)).
 - **No third-party dependency, ever.** A core module shares one dependency graph
   and one address space with the Platform and every other core module. That
   problem is not solved for core modules; it is moved to Mosaic's CI, where it is
   tractable only because the set is small and its members bring nothing with
   them.
 - **This module is an anti-corruption layer**
-  ([ADR 0051](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0051-modules-as-anti-corruption-layers.md)).
+  ([module-stremio-addons#2](https://github.com/mosaic-media/module-stremio-addons/blob/main/docs/adr/0002-modules-as-anti-corruption-layers.md)).
   Every TMDB-ism stops in `tmdb.go`: the two auth schemes, the `title`/`name` and
   `release_date`/`first_air_date` field pairs, image *paths* that are not URLs,
   the per-season episode endpoint, `append_to_response`. Nothing above that file
@@ -52,7 +52,7 @@ attaches no Parts and binds no unexpected provider; keep it.
 ## Modules are the forcing function for the SDK
 
 **What a finding may ask the SDK for is a shape, never an implementation**
-([ADR 0135](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0135-the-sdk-carries-no-implementation.md)):
+([sdk#10](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0010-the-sdk-carries-no-implementation.md)):
 the SDK says how a module interacts with the Platform, the Platform holds the
 implementations, and the SDK's `go.mod` is a module line and a Go version. A gap
 closed by a type or a verb is an SDK bump; a gap that can only be closed by
@@ -76,7 +76,7 @@ README's "honest limits":
   re-derived per render rather than known to the library. Do not write edges
   nothing can read.
 - **Artwork candidates.** The `images` response carries every poster and backdrop
-  variant and `v1.Artwork` holds one string per slot. ADR 0071 anticipates a
+  variant and `v1.Artwork` holds one string per slot. [platform#45](https://github.com/mosaic-media/platform/blob/main/docs/adr/0045-content-artwork-is-stored-on-the-node.md) anticipates a
   candidate set; changing what a stored artwork value *means* is an ADR, not a
   field.
 - `configureModule` **replaces** the settings document; there is no merge. A
@@ -178,12 +178,12 @@ which nothing forces to agree with anything.
 - **Commit author identity** must be `AdamNi-7080 <anicholls41@gmail.com>`.
 - The test container green before pushing.
 - Observability goes through the SDK's ambient `v1.Telemetry`
-  ([ADR 0059](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0059-modules-observe-through-the-sdk.md)),
+  ([sdk#5](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0005-modules-observe-through-the-sdk.md)),
   reached as `TelemetryFrom(ctx)`. Do not print, and do not configure an
   exporter, a sink or retention — the Platform owns the observability plane.
   The API key is a credential: classify it, never write it verbatim.
 - **MIT-licensed**, unlike the Platform's AGPL
-  ([ADR 0022](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0022-licensing.md)).
+  ([platform#1](https://github.com/mosaic-media/platform/blob/main/docs/adr/0001-transactional-store-extensibility.md)).
   Files here carry no SPDX header — match the files already present.
 
 ## The roadmap and the decision records

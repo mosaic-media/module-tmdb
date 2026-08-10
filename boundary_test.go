@@ -13,10 +13,10 @@ import (
 // TestModuleImportsOnlyPublishedContracts is the module boundary made
 // executable: this module must use only the published *contract* modules — the
 // SDK, and the shared SDUI contract it authors its settings screen with
-// (ADR 0038) — plus the standard library.
+// (sdk#4) — plus the standard library.
 //
 // It matters more here than in an extension module, not less. This is a **core**
-// module (ADR 0062), compiled into the Platform binary by Mosaic's CI and
+// module (platform#3), compiled into the Platform binary by Mosaic's CI and
 // sharing its address space — the tier where a private Platform import would
 // actually resolve if the two ever lived in one repository. Keeping it a
 // separate Go module means Go itself rejects that; this parse keeps the intent
@@ -59,7 +59,7 @@ func TestModuleImportsOnlyPublishedContracts(t *testing.T) {
 				// The published SDK — the primary contract a module builds against.
 			case strings.HasPrefix(path, sduiPrefix):
 				// The shared SDUI contract — a module builds its own settings UI
-				// with the producer binding (ADR 0038, contracts#3).
+				// with the producer binding (sdk#4, contracts#3).
 			case strings.HasPrefix(path, platformPrefix):
 				t.Errorf("%s imports private Platform package %q; a module may import only the SDK", name, path)
 			default:

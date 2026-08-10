@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// The TMDB v3 HTTP client. This file is the anti-corruption layer (ADR 0051):
+// The TMDB v3 HTTP client. This file is the anti-corruption layer (module-stremio-addons#2):
 // every TMDB-ism — its two auth schemes, its split of one logical record across
 // `append_to_response` sub-objects, its image paths that are not URLs, its
 // per-season episode endpoint, its parallel field names for films and series —
@@ -43,7 +43,7 @@ const maxSimilar = 12
 
 // Client is a configured TMDB API client. It is built per invocation from the
 // module's settings rather than held on the Capability, because the API key is
-// user-managed configuration the Platform hands in on each call (ADR 0021) and
+// user-managed configuration the Platform hands in on each call (platform#17) and
 // may change between two of them.
 type Client struct {
 	http     *http.Client
@@ -58,7 +58,7 @@ type Client struct {
 
 // NewClient builds a client over an HTTP client and a resolved settings value.
 // The Platform's own client is passed in rather than built here: it carries the
-// netguard dial guard and the outbound telemetry seam (ADR 0055).
+// netguard dial guard and the outbound telemetry seam (platform#33).
 // The token is passed in rather than read from s.APIKey, because the credential
 // in use is not always the user's: it may be the one linked in at build time.
 // Only resolveToken decides which, and settings.APIKey holds the user's key and
@@ -222,7 +222,7 @@ func (c *Client) Search(ctx context.Context, text string) ([]Preview, error) {
 // lookup every other call makes.
 //
 // It is what lets TMDB describe a title someone else materialised. Cinemeta and
-// every Stremio addon key on IMDb ids (ADR 0072 makes a credential-free,
+// every Stremio addon key on IMDb ids (module-cinemeta#1 makes a credential-free,
 // IMDb-keyed source the guaranteed floor), so without this the richer provider
 // could not answer for a single work in such a library — it would hold no id it
 // recognised. Returns false, no error, when TMDB knows the id but has no film or
@@ -1018,7 +1018,7 @@ func (c *Client) pickLogo(logos []rawImage) string {
 
 // runtimeLabel renders a runtime as the display string the SDK asks for. The
 // contract is explicit that this is display-only text rather than a duration
-// (ADR 0034), because sources disagree on the format — so the module picks one
+// (sdk#3), because sources disagree on the format — so the module picks one
 // and the Platform never parses it back.
 func runtimeLabel(movieRuntime int, episodeRuntime []int) string {
 	minutes := movieRuntime

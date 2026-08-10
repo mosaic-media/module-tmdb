@@ -168,7 +168,7 @@ func TestMetadataCarriesTheFieldsAnAddonCannot(t *testing.T) {
 	}
 
 	// The clearlogo. A Stremio meta addon has nowhere to put one, which is the
-	// recorded gap (ADR 0034) this module closes. The fake offers a
+	// recorded gap (sdk#3) this module closes. The fake offers a
 	// language-neutral logo and an English one; the English one wins because it
 	// has been vetted as a title treatment for that language.
 	if !strings.HasSuffix(meta.Logo, "/english.png") {
@@ -350,7 +350,7 @@ func TestMalformedSettingsAreReportedNotIgnored(t *testing.T) {
 }
 
 // The endpoints added after the first release. Each is here because it either
-// closes a gap ADR 0034 recorded or removes a limit the first version shipped
+// closes a gap sdk#3 recorded or removes a limit the first version shipped
 // with.
 
 func TestMetadataCarriesKeywordsCertificationTrailersAndSimilar(t *testing.T) {
@@ -391,7 +391,7 @@ func TestMetadataCarriesKeywordsCertificationTrailersAndSimilar(t *testing.T) {
 		t.Errorf("similar ref = %+v", meta.Similar[0].Ref)
 	}
 	if meta.Similar[0].InLibrary || meta.Similar[0].NodeID != "" {
-		t.Error("a provider must leave InLibrary/NodeID for the Platform to fill (ADR 0028)")
+		t.Error("a provider must leave InLibrary/NodeID for the Platform to fill (platform#18)")
 	}
 }
 
@@ -408,7 +408,7 @@ func TestMetadataResolvesTheFranchiseInReleaseOrder(t *testing.T) {
 	}
 
 	if meta.Collection == nil {
-		t.Fatal("no collection; the franchise is one of ADR 0034's recorded gaps")
+		t.Fatal("no collection; the franchise is one of sdk#3's recorded gaps")
 	}
 	if meta.Collection.Name != "Blade Runner Collection" {
 		t.Errorf("collection name = %q", meta.Collection.Name)
@@ -475,7 +475,7 @@ func TestMetadataAnswersForAnIMDbKeyedRef(t *testing.T) {
 	capability := tmdb.New(redirect(server))
 
 	// The ref another module would produce: Cinemeta and every Stremio addon key
-	// on IMDb ids, and under ADR 0072 a credential-free IMDb-keyed source is the
+	// on IMDb ids, and under module-cinemeta#1 a credential-free IMDb-keyed source is the
 	// guaranteed floor. Without the reverse lookup this module could not describe
 	// a single work in such a library.
 	ref := v1.ContentRef{

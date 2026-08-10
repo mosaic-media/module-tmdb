@@ -9,7 +9,7 @@ import (
 
 // The two discovery roles. They are what produce a ref in the first place: with
 // only RoleMetadata a deployment could describe content it had no way to name,
-// which is why ADR 0035 makes metadata *and* search one required capability
+// which is why platform#23 makes metadata *and* search one required capability
 // class rather than two.
 
 // Search returns virtual candidates for free text (RoleSearch). It is TMDB's
@@ -74,7 +74,7 @@ func (c *Capability) facetsFor(ctx context.Context, client *Client, nativeType s
 	return c.facets.get(ctx, nativeType, client.region, client.fetchFacets)
 }
 
-// CatalogItems lists one collection's entries as virtual candidates (ADR 0028).
+// CatalogItems lists one collection's entries as virtual candidates (platform#18).
 // It touches no part of the object graph — browsing a source must not flood the
 // library with everything the source knows about.
 func (c *Capability) CatalogItems(ctx context.Context, req v1.CatalogItemsRequest) (v1.CatalogItemsResponse, error) {

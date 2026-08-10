@@ -110,7 +110,7 @@ jobs:
           GOPROXY: https://proxy.golang.org,direct
           GOFLAGS: -mod=mod
 
-  # ADR 0078: this module is a *core* module, so its release has to reach the
+  # platform#48: this module is a *core* module, so its release has to reach the
   # Platform binary. Carrying that bump by hand is the friction that record
   # removes — and the step people got wrong was waiting for the proxy, which
   # the `release` job above has now already proved.

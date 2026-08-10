@@ -2,13 +2,13 @@
 
 Mosaic's first-party **metadata** module — a client of [The Movie Database](https://www.themoviedb.org)'s v3 API, built against the [Mosaic SDK](https://github.com/mosaic-media/sdk).
 
-It is a **core module** ([ADR 0062](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0062-two-module-tiers.md)) under the *guarantee* clause: Mosaic cannot function without a metadata/search provider ([ADR 0035](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0035-metadata-as-required-capability.md)), so one must be present in every binary with no install step that can fail. The tier is a delivery decision, not a contract decision — this module is shaped exactly like an extension module, its own Go repository importing only the published contracts, and it does not know which tier it is in.
+It is a **core module** ([platform#3](https://github.com/mosaic-media/platform/blob/main/docs/adr/0003-platform-as-execution-kernel.md)) under the *guarantee* clause: Mosaic cannot function without a metadata/search provider ([platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md)), so one must be present in every binary with no install step that can fail. The tier is a delivery decision, not a contract decision — this module is shaped exactly like an extension module, its own Go repository importing only the published contracts, and it does not know which tier it is in.
 
 ## Why it exists
 
-Until now Mosaic's guaranteed metadata was a **Stremio addon bundled inside `module-stremio-addons`** — Cinemeta, prepended to the user's addon list and opted out with a `disableDefaultAddons` setting. ADR 0035 recorded that as unresolved ("whether the default belongs to the Platform or to the module is a question this record answers one way and the code answers the other"), and ADR 0062 answered it: a metadata provider Mosaic *guarantees* cannot live inside a module a deployment might not install.
+Until now Mosaic's guaranteed metadata was a **Stremio addon bundled inside `module-stremio-addons`** — Cinemeta, prepended to the user's addon list and opted out with a `disableDefaultAddons` setting. [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md) recorded that as unresolved ("whether the default belongs to the Platform or to the module is a question this record answers one way and the code answers the other"), and [platform#3](https://github.com/mosaic-media/platform/blob/main/docs/adr/0003-platform-as-execution-kernel.md) answered it: a metadata provider Mosaic *guarantees* cannot live inside a module a deployment might not install.
 
-It also closes two gaps that were recorded rather than invented ([ADR 0034](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0034-rich-metadata-preview.md)) because the Stremio addon protocol structurally cannot carry them:
+It also closes two gaps that were recorded rather than invented ([sdk#3](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0003-rich-metadata-preview.md)) because the Stremio addon protocol structurally cannot carry them:
 
 - **Clearlogos.** A detail hero renders its title as a logo image. TMDB has a per-language `images` collection; an addon has one `logo` string that most sources leave empty.
 - **Cast with character names and headshots.** A cast *rail* needs faces. Cinemeta returns names.
@@ -18,15 +18,15 @@ It also closes two gaps that were recorded rather than invented ([ADR 0034](http
 | Role | What it does |
 |---|---|
 | `RoleMetadata` | Full detail for a ref — overview, genres, keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**, billed cast with characters and headshots, trailers, related titles, the franchise a film belongs to, **where it can be streamed, rented or bought**, and for a series a per-episode preview with stills. |
-| `RoleSearch` | Free-text search over film and television, plus a reverse lookup from an IMDb id. It ships with metadata rather than as an extra: nothing else can produce a ref this module's metadata role would answer for, and ADR 0035 makes the two one required capability class. |
+| `RoleSearch` | Free-text search over film and television, plus a reverse lookup from an IMDb id. It ships with metadata rather than as an extra: nothing else can produce a ref this module's metadata role would answer for, and [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md) makes the two one required capability class. |
 | `RoleCatalog` | Trending, popular, top-rated and in-cinemas/on-air, **plus any `/discover` query the user defines** — "French thrillers, rated above seven" becomes a browsable catalog like any other. |
-| `RoleSettingsUI` | The API key form, locale, and the custom-catalog editor ([ADR 0038](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0038-module-contributed-settings-ui.md)). |
+| `RoleSettingsUI` | The API key form, locale, and the custom-catalog editor ([sdk#4](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0004-module-contributed-settings-ui.md)). |
 
 ### It answers for other modules' refs
 
-A ref whose native id is an IMDb id — which is every ref from Cinemeta or a Stremio addon, and under [ADR 0072](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0072-the-guaranteed-metadata-provider-needs-no-credential.md) an IMDb-keyed source is the guaranteed floor every deployment has — is resolved through TMDB's `/find` before anything else happens. Without it the richer provider could not describe a single work in such a library, because it would hold no identifier it recognised.
+A ref whose native id is an IMDb id — which is every ref from Cinemeta or a Stremio addon, and under [module-cinemeta#1](https://github.com/mosaic-media/module-cinemeta/blob/main/docs/adr/0001-the-guaranteed-metadata-provider-needs-no-credential.md) an IMDb-keyed source is the guaranteed floor every deployment has — is resolved through TMDB's `/find` before anything else happens. Without it the richer provider could not describe a single work in such a library, because it would hold no identifier it recognised.
 
-It does **not** decide that TMDB *should* answer for another module's ref. Which provider wins is the open precedence seam ADR 0035 named, and it belongs to the Platform. This only makes the module capable of answering when asked.
+It does **not** decide that TMDB *should* answer for another module's ref. Which provider wins is the open precedence seam [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md) named, and it belongs to the Platform. This only makes the module capable of answering when asked.
 
 ### Watch providers
 
@@ -38,7 +38,7 @@ A detail carries where the title can be watched **outside Mosaic** — the servi
 
 A service listed under several terms — rent *and* buy is the norm — appears once, under the best terms available, because the groups are read subscription-first.
 
-**Availability is also written to the node at import**, under the `tmdbWatch` attribute key, so the library can be *grouped* by service. Everything else descriptive is re-derived live from the provider (ADR 0034); this is stored for the same reason artwork is (ADR 0071) — a question asked across the whole library cannot be answered by a round trip per title. The stored shape is:
+**Availability is also written to the node at import**, under the `tmdbWatch` attribute key, so the library can be *grouped* by service. Everything else descriptive is re-derived live from the provider ([sdk#3](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0003-rich-metadata-preview.md)); this is stored for the same reason artwork is ([platform#45](https://github.com/mosaic-media/platform/blob/main/docs/adr/0045-content-artwork-is-stored-on-the-node.md)) — a question asked across the whole library cannot be answered by a round trip per title. The stored shape is:
 
 ```json
 {"tmdbWatch": {
@@ -64,7 +64,7 @@ It fills **no** stream or subtitle role. TMDB describes content; it does not hos
 
 ## Settings
 
-User-managed opaque JSON ([ADR 0021](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0021-module-settings.md)), set through the module's own settings screen:
+User-managed opaque JSON ([platform#17](https://github.com/mosaic-media/platform/blob/main/docs/adr/0017-module-settings.md)), set through the module's own settings screen:
 
 ```json
 {
@@ -104,15 +104,15 @@ A user's own key always wins — set one and it takes over immediately, no flag 
 
 Recorded rather than papered over.
 
-**It is not zero-configuration, and the guarantee clause assumes zero-configuration.** TMDB has no anonymous access, so a user sees nothing until they paste a key. ADR 0035's requirement is "metadata and search work on first boot with zero configuration"; **no TMDB-based module can meet that**, which is why [ADR 0072](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0072-the-guaranteed-metadata-provider-needs-no-credential.md) puts a credential-free provider underneath as the floor and leaves this one as the richer option a deployment opts into.
+**It is not zero-configuration, and the guarantee clause assumes zero-configuration.** TMDB has no anonymous access, so a user sees nothing until they paste a key. [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md)'s requirement is "metadata and search work on first boot with zero configuration"; **no TMDB-based module can meet that**, which is why [module-cinemeta#1](https://github.com/mosaic-media/module-cinemeta/blob/main/docs/adr/0001-the-guaranteed-metadata-provider-needs-no-credential.md) puts a credential-free provider underneath as the floor and leaves this one as the richer option a deployment opts into.
 
 **Search results do not dedup against IMDb-keyed sources.** A ref carries one external identity and a search result's is `tmdb/<id>`; TMDB's search endpoint returns no IMDb id and fetching one would be a round trip per result. So a TMDB search result for a film already added through an IMDb-keyed source shows as *new* rather than *In library*. Both other directions work: an import binds the Work under `tmdb`, `imdb` and (for a series) `tvdb`, and `/find` resolves an incoming IMDb ref to a TMDB id — so a re-import through any of them is idempotent.
 
 **Collections and similar are detail-screen only.** Both now have SDK fields (`v0.17.0`) and both render for a virtual or a library item. What does *not* happen is persisting them: `RelateContent` could write a `RelationCollectionMember` edge, but `ContentService` has **no relation read**, so an edge written today could never be read back. Until `ListFrom`/`ListTo` exist, a franchise is something the provider re-derives rather than something the library knows.
 
-**Artwork candidates are fetched and discarded.** The `images` response carries every poster and backdrop variant; `v1.Artwork` holds one string per slot. ADR 0071 anticipates this — "a future candidate set and user selection grows this value" — but it changes what a stored artwork value *means*, which is an ADR rather than a field.
+**Artwork candidates are fetched and discarded.** The `images` response carries every poster and backdrop variant; `v1.Artwork` holds one string per slot. [platform#45](https://github.com/mosaic-media/platform/blob/main/docs/adr/0045-content-artwork-is-stored-on-the-node.md) anticipates this — "a future candidate set and user selection grows this value" — but it changes what a stored artwork value *means*, which is an ADR rather than a field.
 
-**Changing any setting echoes the API key through the client.** `configureModule` replaces the settings document wholesale — ADR 0021 has no partial update — so a control that sets a language must carry the key or erase it. The key therefore appears inside this screen's action payloads, reaching only an admin who passed `module.configure` but bypassing the Platform's redaction classes ([ADR 0056](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0056-redaction-classes-are-the-pii-boundary.md)), which cannot see inside an opaque module document. It is never *rendered* — the screen shows the last four characters. The fix is an SDK change: a merge semantic on `configureModule`, or a write-only settings field.
+**Changing any setting echoes the API key through the client.** `configureModule` replaces the settings document wholesale — [platform#17](https://github.com/mosaic-media/platform/blob/main/docs/adr/0017-module-settings.md) has no partial update — so a control that sets a language must carry the key or erase it. The key therefore appears inside this screen's action payloads, reaching only an admin who passed `module.configure` but bypassing the Platform's redaction classes ([platform#34](https://github.com/mosaic-media/platform/blob/main/docs/adr/0034-redaction-classes-are-the-pii-boundary.md)), which cannot see inside an opaque module document. It is never *rendered* — the screen shows the last four characters. The fix is an SDK change: a merge semantic on `configureModule`, or a write-only settings field.
 
 **Grouping the library by provider has no client path, deliberately.** The storage half is here and the query half is `SearchContentQuery.AttributesContain` (SDK `v0.19.0`), so the capability exists — but availability churns monthly and nothing refreshes what was written at import. A group that says "on Netflix" for something that left in March is actively wrong in a way an absent group is not, so the surface waits on the jobs runner, scheduler and system principal. It is recorded in the [unreachable capability](https://github.com/mosaic-media/architecture/blob/main/docs/unreachable-capability.md) register rather than shipped early.
 
@@ -134,4 +134,4 @@ This product uses the TMDB API but is not endorsed or certified by TMDB. Attribu
 
 ## License
 
-MIT — the author's choice, permitted for any Module by the Platform's linking exception ([ADR 0022](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0022-licensing.md)).
+MIT — the author's choice, permitted for any Module by the Platform's linking exception ([platform#1](https://github.com/mosaic-media/platform/blob/main/docs/adr/0001-transactional-store-extensibility.md)).

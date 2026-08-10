@@ -15,7 +15,7 @@ import (
 const (
 	// CapabilityID is the id the Platform registers this module under, the id a
 	// ref names to route back here, and the key its settings document is stored
-	// under (ADR 0021).
+	// under (platform#17).
 	CapabilityID = "tmdb"
 	// modulePath is this module's import path, which is how it reads its own
 	// version out of the build graph rather than carrying a constant nothing
@@ -81,7 +81,7 @@ var defaultReadAccessToken string
 
 // Capability satisfies the SDK's capability contract and every provider role it
 // declares. The assertions fail to compile if the module drifts from what the
-// Platform invokes or from a role it claims to fill (ADR 0027).
+// Platform invokes or from a role it claims to fill (sdk#2).
 var (
 	_ v1.Capability         = (*Capability)(nil)
 	_ v1.MetadataProvider   = (*Capability)(nil)
@@ -92,7 +92,7 @@ var (
 
 // Capability is the TMDB metadata module. It holds only an HTTP client: the API
 // key, language and region it works under are user-managed settings the Platform
-// hands in on every invocation (ADR 0021), so one registered module serves
+// hands in on every invocation (platform#17), so one registered module serves
 // whatever each deployment configures.
 type Capability struct {
 	httpClient *http.Client
@@ -262,7 +262,7 @@ func (c *Capability) clientFrom(ctx context.Context, document []byte) (*Client, 
 // immediately — no flag, no opt-out setting, no restart.
 //
 // **This is the only function in the module that reads defaultReadAccessToken**
-// (ADR 0105 rule 4). The two test files that also read it are the deliberate
+// (supervisor#1 rule 4). The two test files that also read it are the deliberate
 // exceptions and ship in no binary: the linker guard, whose whole job is to prove
 // the symbol path still resolves, and the internal test helper that stands a
 // token in. Keeping it to one place is what makes "the bundled token is never
@@ -284,7 +284,7 @@ func resolveToken(s settings) (token string, bundled bool, ok bool) {
 
 // bundledTokenPresent reports whether this build carries a bundled token at all.
 //
-// That is the question ADR 0105 rule 6's three states turn on — no credential
+// That is the question supervisor#1 rule 6's three states turn on — no credential
 // anywhere, the bundled one in use, or the user's own — and the settings screen
 // is the only caller. It resolves against a settings document holding no user
 // key, so the answer arrives as resolveToken's `bundled` flag and the token
@@ -301,13 +301,13 @@ func bundledTokenPresent() bool {
 //
 // A ref whose NativeID is already a TMDB id passes straight through. One
 // carrying an IMDb id — which is every ref from Cinemeta or a Stremio addon, and
-// under ADR 0072 that is the guaranteed floor every deployment has — is resolved
+// under module-cinemeta#1 that is the guaranteed floor every deployment has — is resolved
 // through `/find`. Without this the richer provider could not describe a single
 // work in such a library, because it would hold no identifier it recognised.
 //
 // Note what this does *not* do: it does not decide that TMDB should answer for
 // another module's ref. Which provider wins for a given ref is the open
-// precedence seam ADR 0035 named, and it is the Platform's to settle. This only
+// precedence seam platform#23 named, and it is the Platform's to settle. This only
 // makes the module capable of answering when asked.
 func (c *Client) resolveRef(ctx context.Context, ref v1.ContentRef) (string, string, error) {
 	nativeID, nativeType := ref.NativeID, ref.NativeType
@@ -339,7 +339,7 @@ func isIMDbID(id string) bool {
 }
 
 // Manifest is the module's self-declaration, including the provider roles it
-// fills (ADR 0027). It sources metadata, searches and browses catalogs, and
+// fills (sdk#2). It sources metadata, searches and browses catalogs, and
 // contributes its own settings screen. It declares no stream or subtitle role:
 // TMDB describes content, it does not host or index it.
 func (c *Capability) Manifest() v1.Manifest {
@@ -357,7 +357,7 @@ func (c *Capability) Manifest() v1.Manifest {
 }
 
 // Import materialises the virtual item named by req.Ref — a result a search or
-// catalog browse produced (ADR 0028) — into the object graph.
+// catalog browse produced (platform#18) — into the object graph.
 //
 // It creates the Work with its artwork and external ids, binds the source, and
 // builds the containment tree: a film as Work → feature item, a series as Work →
@@ -404,14 +404,14 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 		ExternalIDs: externalIDs(title),
 		// Streaming availability, stored so the library can be *grouped* by
 		// service. Everything else descriptive is re-derived live from the
-		// provider (ADR 0034); this is written down for the same reason artwork
-		// is (ADR 0071) — a question asked across the whole library cannot be
+		// provider (sdk#3); this is written down for the same reason artwork
+		// is (platform#45) — a question asked across the whole library cannot be
 		// answered by a round trip per title.
 		// time.Now rather than a Platform clock: the SDK exposes none, and this
 		// is a wall-clock fact about when an external service was asked rather
 		// than a Platform state transition that a test would need to control.
 		Attributes: attributes(title, time.Now()),
-		// Stored on the node rather than re-derived per read (ADR 0071). This is
+		// Stored on the node rather than re-derived per read (platform#45). This is
 		// the metadata the import already holds, so storing it costs nothing and
 		// saves a provider round trip for every card that renders this title.
 		Artwork: v1.Artwork{Poster: title.Poster, Backdrop: title.Backdrop, Logo: title.Logo},
@@ -451,7 +451,7 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 }
 
 // importFilm builds a film as Work → feature item. A Part attaches to an item,
-// never a work (ADR 0013), so the item exists even with nothing to attach — it
+// never a work (platform#9), so the item exists even with nothing to attach — it
 // is where a stream source will later hang a release.
 func (c *Capability) importFilm(ctx context.Context, svc v1.ContentService, caller v1.Caller, workID v1.NodeID, result *v1.ImportResult) error {
 	if _, err := svc.AddContentChild(ctx, v1.AddContentChildCommand{
@@ -467,7 +467,7 @@ func (c *Capability) importFilm(ctx context.Context, svc v1.ContentService, call
 
 // importSeries builds a series as Work → season container → episode item,
 // grouping the flat episode list this module already ordered. Each episode
-// carries its own still as artwork (ADR 0071: for an episode node, the poster
+// carries its own still as artwork (platform#45: for an episode node, the poster
 // slot is the still).
 func (c *Capability) importSeries(ctx context.Context, svc v1.ContentService, caller v1.Caller, workID v1.NodeID, title Title, result *v1.ImportResult) error {
 	for _, s := range groupBySeason(title.Episodes) {
@@ -564,7 +564,7 @@ func (c *Capability) bind(ctx context.Context, svc v1.ContentService, caller v1.
 // refFrom builds a ContentRef from a preview. The ref carries the TMDB id as the
 // external identity the Platform dedups on, which is what makes a search result
 // for a title already in the library read as *In library* rather than as new
-// (ADR 0028).
+// (platform#18).
 func refFrom(p Preview) v1.ContentRef {
 	return v1.ContentRef{
 		Provider:       CapabilityID,
@@ -578,7 +578,7 @@ func refFrom(p Preview) v1.ContentRef {
 
 // mediaTypeFor maps a TMDB content type to a Platform media type. TMDB has
 // exactly two content types this module sources; anything else canonicalises as
-// open text (ADR 0015) rather than being rejected.
+// open text (platform#11) rather than being rejected.
 func mediaTypeFor(nativeType string) v1.MediaType {
 	switch nativeType {
 	case typeMovie:
