@@ -16,7 +16,7 @@ import (
 // (sdk#4) — plus the standard library.
 //
 // It matters more here than in an extension module, not less. This is a **core**
-// module (platform#3), compiled into the Platform binary by Mosaic's CI and
+// module (architecture#3), compiled into the Platform binary by Mosaic's CI and
 // sharing its address space — the tier where a private Platform import would
 // actually resolve if the two ever lived in one repository. Keeping it a
 // separate Go module means Go itself rejects that; this parse keeps the intent

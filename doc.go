@@ -2,7 +2,7 @@
 // Database's v3 HTTP API, filling the metadata, search and catalog provider
 // roles (sdk#2) over film and television.
 //
-// It is a **core module** (platform#3) under the guarantee clause — Mosaic cannot
+// It is a **core module** (architecture#3) under the guarantee clause — Mosaic cannot
 // function without a metadata/search provider (platform#23), so one must be present
 // in every binary with no install step that can fail. That is a delivery and
 // coupling decision, not a contract decision: this module is shaped exactly like
@@ -11,7 +11,7 @@
 //
 // It exists because the metadata Mosaic ships with was, until now, a Stremio
 // addon bundled inside module-stremio-addons — a *default belonging to an
-// extension module*, which platform#23 recorded as unresolved and platform#3 answered
+// extension module*, which platform#23 recorded as unresolved and architecture#3 answered
 // the other way. A metadata provider Mosaic guarantees cannot live inside a
 // module a deployment might not install.
 //

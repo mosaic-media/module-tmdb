@@ -14,7 +14,7 @@
 #     that a clean machine could not, and the boundary test still passes because
 #     the import resolved. That matters more here than in an extension module:
 #     this one is compiled into the Platform binary and shares its dependency
-#     graph with every other core module (platform#3).
+#     graph with every other core module (architecture#3).
 #
 # Unlike the Stremio module's container, this one needs **no** outbound network.
 # TMDB requires an API key, so there is no credential a test could hold that is

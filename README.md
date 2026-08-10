@@ -2,11 +2,11 @@
 
 Mosaic's first-party **metadata** module — a client of [The Movie Database](https://www.themoviedb.org)'s v3 API, built against the [Mosaic SDK](https://github.com/mosaic-media/sdk).
 
-It is a **core module** ([platform#3](https://github.com/mosaic-media/platform/blob/main/docs/adr/0003-platform-as-execution-kernel.md)) under the *guarantee* clause: Mosaic cannot function without a metadata/search provider ([platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md)), so one must be present in every binary with no install step that can fail. The tier is a delivery decision, not a contract decision — this module is shaped exactly like an extension module, its own Go repository importing only the published contracts, and it does not know which tier it is in.
+It is a **core module** ([architecture#3](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0003-two-module-tiers.md)) under the *guarantee* clause: Mosaic cannot function without a metadata/search provider ([platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md)), so one must be present in every binary with no install step that can fail. The tier is a delivery decision, not a contract decision — this module is shaped exactly like an extension module, its own Go repository importing only the published contracts, and it does not know which tier it is in.
 
 ## Why it exists
 
-Until now Mosaic's guaranteed metadata was a **Stremio addon bundled inside `module-stremio-addons`** — Cinemeta, prepended to the user's addon list and opted out with a `disableDefaultAddons` setting. [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md) recorded that as unresolved ("whether the default belongs to the Platform or to the module is a question this record answers one way and the code answers the other"), and [platform#3](https://github.com/mosaic-media/platform/blob/main/docs/adr/0003-platform-as-execution-kernel.md) answered it: a metadata provider Mosaic *guarantees* cannot live inside a module a deployment might not install.
+Until now Mosaic's guaranteed metadata was a **Stremio addon bundled inside `module-stremio-addons`** — Cinemeta, prepended to the user's addon list and opted out with a `disableDefaultAddons` setting. [platform#23](https://github.com/mosaic-media/platform/blob/main/docs/adr/0023-metadata-as-required-capability.md) recorded that as unresolved ("whether the default belongs to the Platform or to the module is a question this record answers one way and the code answers the other"), and [architecture#3](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0003-two-module-tiers.md) answered it: a metadata provider Mosaic *guarantees* cannot live inside a module a deployment might not install.
 
 It also closes two gaps that were recorded rather than invented ([sdk#3](https://github.com/mosaic-media/sdk/blob/main/docs/adr/0003-rich-metadata-preview.md)) because the Stremio addon protocol structurally cannot carry them:
 
@@ -134,4 +134,4 @@ This product uses the TMDB API but is not endorsed or certified by TMDB. Attribu
 
 ## License
 
-MIT — the author's choice, permitted for any Module by the Platform's linking exception ([platform#1](https://github.com/mosaic-media/platform/blob/main/docs/adr/0001-transactional-store-extensibility.md)).
+MIT — the author's choice, permitted for any Module by the Platform's linking exception ([architecture#1](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0001-licensing.md)).

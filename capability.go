@@ -262,7 +262,7 @@ func (c *Capability) clientFrom(ctx context.Context, document []byte) (*Client, 
 // immediately — no flag, no opt-out setting, no restart.
 //
 // **This is the only function in the module that reads defaultReadAccessToken**
-// (supervisor#1 rule 4). The two test files that also read it are the deliberate
+// (architecture#4 rule 4). The two test files that also read it are the deliberate
 // exceptions and ship in no binary: the linker guard, whose whole job is to prove
 // the symbol path still resolves, and the internal test helper that stands a
 // token in. Keeping it to one place is what makes "the bundled token is never
@@ -284,7 +284,7 @@ func resolveToken(s settings) (token string, bundled bool, ok bool) {
 
 // bundledTokenPresent reports whether this build carries a bundled token at all.
 //
-// That is the question supervisor#1 rule 6's three states turn on — no credential
+// That is the question architecture#4 rule 6's three states turn on — no credential
 // anywhere, the bundled one in use, or the user's own — and the settings screen
 // is the only caller. It resolves against a settings document holding no user
 // key, so the answer arrives as resolveToken's `bundled` flag and the token

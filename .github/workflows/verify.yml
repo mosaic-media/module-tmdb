@@ -12,7 +12,7 @@ name: verify
 # verify workflow makes the same call.
 #
 # There is no license-header check here, unlike the platform's. Files in this
-# repository carry no SPDX header on purpose (platform#1: modules are MIT, the
+# repository carry no SPDX header on purpose (architecture#1: modules are MIT, the
 # Platform is AGPL), so checking for one would be checking for the wrong thing.
 
 on:
