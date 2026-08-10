@@ -51,6 +51,17 @@ attaches no Parts and binds no unexpected provider; keep it.
 
 ## Modules are the forcing function for the SDK
 
+**What a finding may ask the SDK for is a shape, never an implementation**
+([ADR 0135](https://github.com/mosaic-media/architecture/blob/main/docs/adr/0135-the-sdk-carries-no-implementation.md)):
+the SDK says how a module interacts with the Platform, the Platform holds the
+implementations, and the SDK's `go.mod` is a module line and a Go version. A gap
+closed by a type or a verb is an SDK bump; a gap that can only be closed by
+naming a library belongs behind a declarative Platform surface instead. The
+OpenTelemetry modules in this repository's *indirect* requires are what the other
+answer costs — they arrived through the SDK, for host-side wiring no module
+calls, and a core module's "no third-party dependency, ever" is only as good as
+the contract's own.
+
 When something cannot be expressed, that is a **finding**, not an obstacle to
 work around. Take it to the SDK as an additive `v0.x` bump, or record it in the
 roadmap as an open gap. **Do not simulate the missing surface locally.** This
