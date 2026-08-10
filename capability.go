@@ -261,11 +261,17 @@ func (c *Capability) clientFrom(ctx context.Context, document []byte) (*Client, 
 // TMDB account, or simply not to depend on ours sets a key and it wins
 // immediately — no flag, no opt-out setting, no restart.
 //
-// **This is the only function that reads defaultReadAccessToken.** Keeping it to
-// one place is what makes "the bundled token is never written into the settings
-// document, never rendered and never logged" a property that can be checked by
-// reading rather than a claim that has to be trusted: settings.APIKey holds the
-// user's key and nothing else, everywhere.
+// **This is the only function in the module that reads defaultReadAccessToken**
+// (ADR 0105 rule 4). The two test files that also read it are the deliberate
+// exceptions and ship in no binary: the linker guard, whose whole job is to prove
+// the symbol path still resolves, and the internal test helper that stands a
+// token in. Keeping it to one place is what makes "the bundled token is never
+// written into the settings document, never rendered and never logged" a property
+// that can be checked by reading rather than a claim that has to be trusted:
+// settings.APIKey holds the user's key and nothing else, everywhere.
+//
+// Anything that needs to know only *whether* a bundled token exists asks
+// bundledTokenPresent below, which asks this function rather than the variable.
 func resolveToken(s settings) (token string, bundled bool, ok bool) {
 	if s.APIKey != "" {
 		return s.APIKey, false, true
@@ -274,6 +280,21 @@ func resolveToken(s settings) (token string, bundled bool, ok bool) {
 		return defaultReadAccessToken, true, true
 	}
 	return "", false, false
+}
+
+// bundledTokenPresent reports whether this build carries a bundled token at all.
+//
+// That is the question ADR 0105 rule 6's three states turn on — no credential
+// anywhere, the bundled one in use, or the user's own — and the settings screen
+// is the only caller. It resolves against a settings document holding no user
+// key, so the answer arrives as resolveToken's `bundled` flag and the token
+// itself never leaves that function. A screen that tested the variable directly
+// would answer the same question and cost rule 4, which is what happened here:
+// the presence checks were reading defaultReadAccessToken while the comment above
+// still claimed a single reader.
+func bundledTokenPresent() bool {
+	_, bundled, _ := resolveToken(settings{})
+	return bundled
 }
 
 // resolveRef translates a ref this module did not produce into TMDB's own ids.

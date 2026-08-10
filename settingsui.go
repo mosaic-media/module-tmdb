@@ -102,7 +102,7 @@ func apiKeySection(s settings) *ui.Element {
 	// one-liner: a user with no key of their own may still have working metadata,
 	// and a screen that showed an empty field would read as broken.
 	if s.APIKey == "" {
-		if defaultReadAccessToken == "" {
+		if !bundledTokenPresent() {
 			return ui.Section("API key",
 				ui.Banner("TMDB has no anonymous access, so metadata and search do nothing until a key is set. Create a free account at themoviedb.org, then copy the API Read Access Token from Settings › API.", ui.ToneWarning),
 				field)
@@ -119,7 +119,7 @@ func apiKeySection(s settings) *ui.Element {
 	cleared := s
 	cleared.APIKey = ""
 	revert := "Clearing it stops TMDB working until you add another."
-	if defaultReadAccessToken != "" {
+	if bundledTokenPresent() {
 		revert = "Clearing it falls back to the key bundled with Mosaic."
 	}
 	return ui.Section("API key",
