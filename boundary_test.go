@@ -59,7 +59,7 @@ func TestModuleImportsOnlyPublishedContracts(t *testing.T) {
 				// The published SDK — the primary contract a module builds against.
 			case strings.HasPrefix(path, sduiPrefix):
 				// The shared SDUI contract — a module builds its own settings UI
-				// with the producer binding (ADR 0038, ADR 0025).
+				// with the producer binding (ADR 0038, contracts#3).
 			case strings.HasPrefix(path, platformPrefix):
 				t.Errorf("%s imports private Platform package %q; a module may import only the SDK", name, path)
 			default:

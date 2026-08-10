@@ -84,7 +84,7 @@ func configureInput(s settings) map[string]any {
 // set or replace it, and — only when there is one — a control to clear it.
 func apiKeySection(s settings) *ui.Element {
 	// A form: the field writes `apiKey` into the form's scope and submit merges
-	// the scope into the settings document the invoke carries (ADR 0088). The
+	// the scope into the settings document the invoke carries (contracts#12). The
 	// rest of the document travels in the action, so only what was typed comes
 	// from the scope. This replaces the "$value" substitution.
 	keep := s
@@ -135,7 +135,7 @@ func apiKeySection(s settings) *ui.Element {
 // what "in cinemas" means.
 func localeSection(s settings) *ui.Element {
 	// One form per field, each writing its own name into its own scope and
-	// merging into the settings document the invoke carries (ADR 0088). Two
+	// merging into the settings document the invoke carries (contracts#12). Two
 	// forms rather than one because the two controls are independent here —
 	// setting a language should not require also restating a region.
 	keepLanguage := s
@@ -229,7 +229,7 @@ func catalogSection(s settings) *ui.Element {
 // built from submitted on its own and two fields would have needed somewhere to
 // hold the half-finished value between them — which a module's settings screen
 // had no way to express. A State scope is exactly that somewhere, so the pair is
-// two fields again (ADR 0087, ADR 0088).
+// two fields again (contracts#11, contracts#12).
 func addCatalogField(s settings, nativeType, label, placeholder string) *ui.Element {
 	// Two fields, which is the point: the substitution this replaces filled every
 	// placeholder in an action with the same string, so a name and a query could
