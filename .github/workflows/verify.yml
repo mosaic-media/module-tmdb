@@ -40,6 +40,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Every record citation names its repository
+        run: python3 scripts/adr_lint.py --repo module-tmdb --exclude 'scripts/adr_*.py'
+
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
