@@ -175,7 +175,7 @@ func TestMetadataCarriesTheFieldsAnAddonCannot(t *testing.T) {
 		t.Fatalf("logo = %q, want the language-tagged variant", meta.Logo)
 	}
 
-	// Cast with character names *and* headshots — the other recorded gap. Sorted
+	// Cast with character names and headshots — the other recorded gap. Sorted
 	// into billing order, which the fake deliberately does not supply.
 	if len(meta.Cast) != 3 {
 		t.Fatalf("cast = %d, want 3", len(meta.Cast))
@@ -349,9 +349,8 @@ func TestMalformedSettingsAreReportedNotIgnored(t *testing.T) {
 	}
 }
 
-// The endpoints added after the first release. Each is here because it either
-// closes a gap sdk#3 recorded or removes a limit the first version shipped
-// with.
+// The richer fields and the endpoints behind them: sdk#3's recorded gaps, the
+// reverse IMDb lookup, and the user's own discover catalogs.
 
 func TestMetadataCarriesKeywordsCertificationTrailersAndSimilar(t *testing.T) {
 	server := fakeTMDB()
@@ -622,8 +621,8 @@ func containsString(haystack []string, needle string) bool {
 	return false
 }
 
-// Watch providers: where a title can be seen *outside* Mosaic. The tests lean on
-// the two properties that make it different from every other read field — it is
+// Watch providers: where a title can be seen outside Mosaic. The tests pin the
+// two properties that make it different from every other read field — it is
 // region-exact, and it is not a source.
 
 func TestWatchProvidersAreRegionExact(t *testing.T) {
@@ -770,8 +769,8 @@ func TestWatchProvidersNeverBecomeParts(t *testing.T) {
 	}
 }
 
-// Availability is *stored* on the node, not only projected onto a detail. This
-// is what makes grouping a library by service possible at all: the question is
+// Availability is stored on the node, not only projected onto a detail. That is
+// what makes grouping a library by service possible at all: the question is
 // asked across the whole library, and a round trip per title cannot answer it.
 
 func TestImportStoresWatchAvailabilityOnTheNode(t *testing.T) {
@@ -853,9 +852,8 @@ func TestImportStoresNoAttributesWithoutAvailability(t *testing.T) {
 	}
 }
 
-// The shape a containment query is written against. It is exported precisely
-// because it is a published key rather than a private one, and this test is what
-// stops it drifting silently.
+// The shape a containment query is written against. The key is exported because
+// it is a published one, and this test is what stops it drifting silently.
 func TestTheStoredShapeIsQueryableByContainment(t *testing.T) {
 	server := fakeTMDB()
 	defer server.Close()
@@ -869,10 +867,9 @@ func TestTheStoredShapeIsQueryableByContainment(t *testing.T) {
 		t.Fatalf("Import: %v", err)
 	}
 
-	// This is the filter a caller would pass as SearchContentQuery.
-	// AttributesContain. Asserting it against the document the module actually
-	// wrote is what keeps the two from drifting apart — they live in different
-	// repositories and nothing else connects them.
+	// The filter a caller would pass as SearchContentQuery.AttributesContain,
+	// asserted against the document the module actually wrote. Nothing else
+	// connects the two: they live in different repositories.
 	filter := []byte(`{"` + tmdb.WatchAttribute + `":{"providers":["Netflix"]}}`)
 	if !jsonContains(t, content.nodes[importedWorkID(t, content)].Attributes, filter) {
 		t.Fatalf("the stored document does not satisfy the documented query shape\n stored: %s\n filter: %s",
@@ -964,10 +961,10 @@ func TestFilterableCatalogsDeclareTheirOptions(t *testing.T) {
 		byKey[c.ID+"/"+c.NativeType] = c
 	}
 
-	// **Trending declares nothing, and that is the assertion worth having.**
-	// TMDB's trending is a computed ranking `/discover` cannot reproduce, so the
-	// honest answer is an absent control rather than a chip row that quietly
-	// serves plain popularity under the word "Trending".
+	// Trending declares nothing. TMDB's trending is a computed ranking
+	// `/discover` cannot reproduce, so the honest answer is an absent control
+	// rather than a chip row that quietly serves plain popularity under the word
+	// "Trending".
 	if got := byKey["trending/movie"].Filters; len(got) != 0 {
 		t.Errorf("trending declared %d filters; it has no faithful discover equivalent and must declare none", len(got))
 	}
@@ -1065,10 +1062,10 @@ func TestANarrowedCatalogIsServedByDiscover(t *testing.T) {
 	}
 }
 
-// A filter the catalog never declared, and a value the filter never offered,
-// are both refused. **Answering with the unfiltered page would be the worse
-// failure**: it returns a plausible list for a question nobody asked, and unlike
-// a missing control a user cannot see it.
+// A filter the catalog never declared, and a value the filter never offered, are
+// both refused. Answering with the unfiltered page would be the worse failure:
+// it returns a plausible list for a question nobody asked, and unlike a missing
+// control a user cannot see it.
 func TestAnUndeclaredNarrowingIsRefused(t *testing.T) {
 	server := fakeTMDB()
 	defer server.Close()

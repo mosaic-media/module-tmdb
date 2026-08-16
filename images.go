@@ -8,16 +8,16 @@ import (
 
 // The image CDN configuration.
 //
-// A TMDB record carries an image *path* ("/xyz.jpg"), never a URL: the base host
+// A TMDB record carries an image path ("/xyz.jpg"), never a URL: the base host
 // and the size are the caller's choice, so the URL does not exist until this
 // module builds it. TMDB publishes both through `/configuration` and documents
 // that a client should read them rather than hardcode them.
 //
-// **The fallback below is the same set that was hardcoded, and it stays.** The
-// values have not changed in a decade, and a metadata module that cannot render
-// a poster because a configuration call failed would have turned a robustness
-// improvement into an outage. So the fetch is best-effort, cached for a day, and
-// never on the critical path of a first request.
+// The fallback below stays even so. Those values have not changed in a decade,
+// and a metadata module that cannot render a poster because a configuration call
+// failed would be an outage in place of a robustness improvement. So the fetch
+// is best-effort, cached for a day, and never on the critical path of a first
+// request.
 
 // imageConfig is the resolved CDN base and the size to request per surface.
 type imageConfig struct {
@@ -117,7 +117,9 @@ func (c *Client) fetchImageConfig(ctx context.Context) (imageConfig, error) {
 }
 
 // pickSize keeps the preferred size when the server still offers it, and
-// otherwise falls back to the largest non-"original" size available.
+// otherwise takes the last non-"original" entry in the list. That is the largest
+// only because TMDB returns each size list smallest-first — an ordering this
+// relies on rather than checks.
 //
 // "original" is deliberately not the fallback: it is unbounded, and a poster
 // rail that silently started serving 4000px source scans would be a performance

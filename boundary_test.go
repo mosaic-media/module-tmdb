@@ -11,17 +11,18 @@ import (
 )
 
 // TestModuleImportsOnlyPublishedContracts is the module boundary made
-// executable: this module must use only the published *contract* modules — the
+// executable: this module must use only the published contract modules — the
 // SDK, and the shared SDUI contract it authors its settings screen with
 // (sdk#4) — plus the standard library.
 //
-// It matters more here than in an extension module, not less. This is a **core**
-// module (architecture#3), compiled into the Platform binary by Mosaic's CI and
-// sharing its address space — the tier where a private Platform import would
-// actually resolve if the two ever lived in one repository. Keeping it a
-// separate Go module means Go itself rejects that; this parse keeps the intent
-// explicit and catches a third-party dependency creeping into a binary whose
-// dependency graph is shared with every other core module.
+// Go itself rejects a private Platform import, because this is a separate Go
+// module. The parse keeps the intent explicit and catches a third-party
+// dependency creeping into a binary whose dependency graph is shared with the
+// Platform and every other core module (architecture#3).
+//
+// It reads this directory only, not the tree. That is sound while every source
+// file is here; adding a subdirectory means making this walk, or the boundary
+// goes unchecked inside it.
 func TestModuleImportsOnlyPublishedContracts(t *testing.T) {
 	const (
 		sdkPrefix      = "github.com/mosaic-media/sdk/"

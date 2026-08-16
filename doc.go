@@ -2,33 +2,27 @@
 // Database's v3 HTTP API, filling the metadata, search and catalog provider
 // roles (sdk#2) over film and television.
 //
-// It is a **core module** (architecture#3) under the guarantee clause — Mosaic cannot
+// It is a core module (architecture#3) under the guarantee clause — Mosaic cannot
 // function without a metadata/search provider (platform#23), so one must be present
 // in every binary with no install step that can fail. That is a delivery and
 // coupling decision, not a contract decision: this module is shaped exactly like
 // an extension module, its own Go repository importing only the published SDK
 // and the SDUI contract, and it does not know which tier it is in.
 //
-// It exists because the metadata Mosaic ships with was, until now, a Stremio
-// addon bundled inside module-stremio-addons — a *default belonging to an
-// extension module*, which platform#23 recorded as unresolved and architecture#3 answered
-// the other way. A metadata provider Mosaic guarantees cannot live inside a
-// module a deployment might not install.
-//
 // # What it provides
 //
 //   - RoleMetadata — full descriptive detail for a ref: overview, genres,
-//     keywords, age certification, rating, runtime, poster/backdrop/**clearlogo**,
+//     keywords, age certification, rating, runtime, poster/backdrop/clearlogo,
 //     billed cast with character names and headshots, trailers, related titles,
 //     the franchise a film belongs to, where it can be streamed, rented or
 //     bought, and for a series a per-episode preview with stills. The logo, the
 //     cast photographs, the franchise and the related titles are all things a
 //     Stremio meta addon structurally cannot supply (sdk#3's recorded gaps).
 //
-//     Watch availability is the one field here that describes something
-//     *outside* Mosaic. It is not a source: no offer becomes a Part, none is
-//     playable through the Platform, and a consumer must render it
-//     informationally rather than as a play control.
+//     Watch availability is the one field here that describes something outside
+//     Mosaic. It is not a source: no offer becomes a Part, none is playable
+//     through the Platform, and a consumer must render it informationally rather
+//     than as a play control.
 //
 //   - RoleSearch — free-text search over film and television, the other half of
 //     the capability class platform#23 requires. Without it nothing can produce a
@@ -46,11 +40,10 @@
 //     module is inert until a key is set; the screen is the only path to setting
 //     one (sdk#4).
 //
-// It does **not** fill RoleStream or RoleSubtitles. TMDB describes content and
-// does not host or index it, so a TMDB-only deployment materialises Works and
-// their season/episode trees with no Parts — the meta-only shape the Platform
-// already supports, and the reason metadata and streams are independent
-// concerns.
+// It does not fill RoleStream or RoleSubtitles. TMDB describes content and does
+// not host or index it, so a TMDB-only deployment materialises Works and their
+// season/episode trees with no Parts — the meta-only shape the Platform already
+// supports, because metadata and streams are independent concerns.
 //
 // It owns no schema (platform#8): everything it writes goes through
 // ContentService, acting as the Caller the Platform hands it (platform#13).

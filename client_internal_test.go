@@ -164,6 +164,8 @@ func TestSanitiseDiscoverQueryDropsReservedParameters(t *testing.T) {
 	// api_key is the one that matters: without this, a query could replace the
 	// credential the module sends, silently, because url.Values.Set is
 	// last-writer-wins and the substitution happens before the request is built.
+	// Every parameter in reservedDiscoverParams is asserted here, so adding one
+	// means adding it to this list too.
 	got := sanitiseDiscoverQuery("with_genres=53&api_key=attacker&page=9&language=xx&include_adult=true")
 	parsed := mustParseQuery(t, got)
 
@@ -193,8 +195,9 @@ func TestSanitiseDiscoverQueryDropsReservedParameters(t *testing.T) {
 }
 
 func TestNormaliseCatalogSplitsTheEnteredPair(t *testing.T) {
-	// The settings screen submits "name | query" as one value, because a
-	// SubmitField submits on its own.
+	// The settings form now submits a name and a query as two fields, but
+	// documents written before it did still hold "name | query" in Name and must
+	// keep working.
 	got := normaliseCatalog(customCatalog{Name: " French Thrillers | with_genres=53&with_original_language=fr ", Type: typeMovie})
 	if got.Name != "French Thrillers" || got.Query != "with_genres=53&with_original_language=fr" {
 		t.Fatalf("normaliseCatalog = %+v", got)
@@ -285,9 +288,9 @@ func TestCertificationIsRegionExactOrEmpty(t *testing.T) {
 		t.Fatalf("GB certification = %q, want 15 (skipping the release with none)", got)
 	}
 
-	// A region TMDB has no rating for is empty — *not* another country's rating.
-	// A US "R" shown to a household that set DE is a different scale reported as
-	// if it were theirs.
+	// A region TMDB has no rating for is empty, never another country's rating: a
+	// US "R" shown to a household that set DE is a different scale reported as if
+	// it were theirs, and empty must not be read as permissive.
 	de := &Client{region: "DE", images: defaultImageConfig}
 	if got := de.certificationOf(film, typeMovie); got != "" {
 		t.Fatalf("DE certification = %q, want empty rather than a substitute", got)
@@ -447,10 +450,9 @@ func mustParseQuery(t *testing.T, query string) url.Values {
 	return parsed
 }
 
-// The bundled read access token. These live in the internal test package
-// because defaultReadAccessToken is set by the linker and is deliberately
-// unexported — nothing outside this package can read it, which is half the
-// point.
+// The bundled read access token. These live in the internal test package because
+// defaultReadAccessToken is set by the linker and is deliberately unexported:
+// nothing outside this package can read it, which is half the point.
 
 // withBundledToken sets the linked-in token for one test and restores it.
 func withBundledToken(t *testing.T, token string) {
@@ -490,8 +492,8 @@ func TestResolveTokenWithNothingLinkedIn(t *testing.T) {
 	}
 }
 
-// The requirement that matters: the bundled token is never rendered and never
-// written into the settings document a client round-trips.
+// The bundled token is never rendered and never written into the settings
+// document a client round-trips.
 func TestSettingsUINeverEmitsTheBundledToken(t *testing.T) {
 	const bundled = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJib3VuZGxlZCJ9.s3cr3t-signature"
 	withBundledToken(t, bundled)

@@ -9,7 +9,7 @@ import (
 
 // The two discovery roles. They are what produce a ref in the first place: with
 // only RoleMetadata a deployment could describe content it had no way to name,
-// which is why platform#23 makes metadata *and* search one required capability
+// which is why platform#23 makes metadata and search one required capability
 // class rather than two.
 
 // Search returns virtual candidates for free text (RoleSearch). It is TMDB's
@@ -42,13 +42,9 @@ func (c *Capability) Search(ctx context.Context, req v1.SearchRequest) (v1.Searc
 }
 
 // Catalogs lists the collections this module exposes (RoleCatalog) — a curated
-// built-in set plus whatever `/discover` queries the user has defined.
-//
-// TMDB has endpoints rather than a catalog manifest, so unlike a Stremio addon
-// there is nobody to ask what collections exist and the built-in set is somebody's
-// choice. `/discover` is what stops that choice being the ceiling. Nothing in the
-// SDK had to grow for it: this role already returned a list rather than a
-// constant, so user-defined catalogs were a settings question all along.
+// built-in set plus whatever `/discover` queries the user has defined. Which
+// endpoint backs each one, and which of them can be narrowed, is catalog.go's
+// business.
 func (c *Capability) Catalogs(ctx context.Context, req v1.CatalogsRequest) (v1.CatalogsResponse, error) {
 	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
@@ -83,10 +79,10 @@ func (c *Capability) CatalogItems(ctx context.Context, req v1.CatalogItemsReques
 		return v1.CatalogItemsResponse{}, err
 	}
 
-	// The selection is checked against the *same declaration* Catalogs handed
-	// out, rather than trusted or silently dropped. A filter this module does
-	// not recognise is refused here — see narrowingFor for why answering with
-	// the unfiltered page would be the worse failure.
+	// The selection is checked against the same declaration Catalogs handed out,
+	// rather than trusted or silently dropped. A filter this module does not
+	// recognise is refused here — see narrowingFor for why answering with the
+	// unfiltered page would be the worse failure.
 	decl, ok := client.findCatalog(req.CatalogID, req.NativeType)
 	if !ok {
 		return v1.CatalogItemsResponse{}, fmt.Errorf("unknown TMDB catalog %q for type %q", req.CatalogID, req.NativeType)

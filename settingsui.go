@@ -12,10 +12,8 @@ import (
 // sdk#4): set or replace the API key, choose a language and region, toggle
 // adult results, and read the attribution TMDB's terms require.
 //
-// This role is not optional decoration for this module the way it is for one
-// with a usable default. TMDB has no anonymous access, so **the module does
-// nothing at all until a key is set** and this screen is the only path to
-// setting one — a capability with no client path is not done, it is owed.
+// TMDB has no anonymous access, so the module does nothing at all until a key is
+// set and this screen is the only path to setting one.
 //
 // Every mutating control is an Invoke of the Platform's configureModule command
 // carrying the complete new settings document, so the Platform stays the one
@@ -48,21 +46,18 @@ func (c *Capability) SettingsUI(ctx context.Context, req v1.SettingsUIRequest) (
 // the complete document the Platform persists. Controls mutate a copy and pass
 // it here, so a change to one field never silently drops another.
 //
-// **The whole document, including the API key, is what a control has to carry,
-// and that is a gap in platform#17 rather than a choice made here.**
-// configureModule *replaces* the stored document; there is no partial update. So
-// a module with a secret setting must echo that secret back through the client
-// on every control that changes anything else, or setting a language would erase
-// the key. The consequence is that the credential appears inside the action
-// payloads of this screen — reaching only the admin who passed
-// `module.configure`, but bypassing the Platform's redaction classes
-// (platform#34), which cannot see inside a module's opaque settings document.
+// The whole document, including the API key, is what a control has to carry, and
+// that is a gap in platform#17 rather than a choice made here: configureModule
+// replaces the stored document and there is no partial update, so a module with
+// a secret setting must echo that secret back through the client on every
+// control that changes anything else, or setting a language would erase the key.
+// The credential therefore appears inside the action payloads of this screen —
+// reaching only the admin who passed `module.configure`, but bypassing the
+// Platform's redaction classes (platform#34), which cannot see inside a module's
+// opaque settings document.
 //
-// What the SDK is missing is either a merge semantic on configureModule or a
-// write-only settings field. Recorded as a finding rather than worked around:
-// the alternative available here — dropping every setting except the key so no
-// control ever carries it — buys the property by removing the features, and the
-// module is meant to find the gap, not to hide it.
+// Closing it needs either a merge semantic on configureModule or a write-only
+// settings field. It is a recorded finding, not something to work around here.
 func configureInput(s settings) map[string]any {
 	catalogs := make([]any, 0, len(s.Catalogs))
 	for _, c := range s.Catalogs {
@@ -83,10 +78,10 @@ func configureInput(s settings) map[string]any {
 // apiKeySection is the credential form: the current state of the key, a field to
 // set or replace it, and — only when there is one — a control to clear it.
 func apiKeySection(s settings) *ui.Element {
-	// A form: the field writes `apiKey` into the form's scope and submit merges
-	// the scope into the settings document the invoke carries (contracts#20). The
+	// The field writes `apiKey` into the form's scope, and submit merges the
+	// scope into the settings document the invoke carries (contracts#20). The
 	// rest of the document travels in the action, so only what was typed comes
-	// from the scope. This replaces the "$value" substitution.
+	// from the scope.
 	keep := s
 	keep.APIKey = ""
 	field := ui.Form(
@@ -98,9 +93,9 @@ func apiKeySection(s settings) *ui.Element {
 			ui.Prop("placeholder", "Paste your TMDB API key or read access token…"),
 			ui.Prop("validators", map[string]any{"required": true})))
 
-	// Three states, and the middle one is the reason this section is not a
-	// one-liner: a user with no key of their own may still have working metadata,
-	// and a screen that showed an empty field would read as broken.
+	// Three states, and the middle one is why this section is not a one-liner: a
+	// user with no key of their own may still have working metadata, and a screen
+	// that showed only an empty field would read as broken.
 	if s.APIKey == "" {
 		if !bundledTokenPresent() {
 			return ui.Section("API key",
@@ -108,7 +103,7 @@ func apiKeySection(s settings) *ui.Element {
 				field)
 		}
 		// The bundled token is described, never shown. It is not this user's
-		// credential and there is nothing for them to copy, verify or fix — so
+		// credential and there is nothing for them to copy, verify or fix, so
 		// rendering any part of it would be noise at best.
 		return ui.Section("API key",
 			ui.Banner("Using the read access token bundled with Mosaic, so metadata works without any setup. Add your own below if you would rather not share its rate limit — yours will take over immediately.", ui.ToneSuccess),
@@ -136,8 +131,8 @@ func apiKeySection(s settings) *ui.Element {
 func localeSection(s settings) *ui.Element {
 	// One form per field, each writing its own name into its own scope and
 	// merging into the settings document the invoke carries (contracts#20). Two
-	// forms rather than one because the two controls are independent here —
-	// setting a language should not require also restating a region.
+	// forms rather than one, because setting a language should not require also
+	// restating a region.
 	keepLanguage := s
 	keepLanguage.Language = ""
 	keepRegion := s
@@ -186,10 +181,10 @@ func contentSection(s settings) *ui.Element {
 
 // catalogSection lists the user's own `/discover` catalogs and adds more.
 //
-// Two fields rather than a filter builder, and that is a deliberate trade: the
-// alternative models every discover parameter TMDB has and goes stale the moment
-// it adds one. A raw query is a power-user surface — it says so — and it means
-// the whole of `/discover` is reachable rather than the subset somebody found
+// Two fields rather than a filter builder, which is a deliberate trade: a
+// builder would model every discover parameter TMDB has and go stale the moment
+// it adds one. A raw query is a power-user surface — the banner says so — and it
+// keeps the whole of `/discover` reachable rather than the subset somebody found
 // time to build a control for.
 func catalogSection(s settings) *ui.Element {
 	els := []ui.El{
@@ -223,18 +218,11 @@ func catalogSection(s settings) *ui.Element {
 	return ui.Section("Custom catalogs", els...)
 }
 
-// addCatalogField is the add-a-catalog form: a name and a query.
-//
-// It used to be one field holding "name | query", because the control it was
-// built from submitted on its own and two fields would have needed somewhere to
-// hold the half-finished value between them — which a module's settings screen
-// had no way to express. A State scope is exactly that somewhere, so the pair is
-// two fields again (contracts#20, contracts#20).
+// addCatalogField is the add-a-catalog form: a name and a query, as two named
+// fields in one form scope (contracts#20). The pair is submitted together, which
+// is why settingsFrom folds AddCatalog* into the stored list rather than the
+// form appending to it.
 func addCatalogField(s settings, nativeType, label, placeholder string) *ui.Element {
-	// Two fields, which is the point: the substitution this replaces filled every
-	// placeholder in an action with the same string, so a name and a query could
-	// not be told apart and had to be crammed into one box separated by a "|".
-	// A form carries two named fields, so the screen asks for two things.
 	return ui.Component("Box",
 		ui.Prop("style", map[string]any{"direction": "column", "gap": 2}),
 		ui.Group(

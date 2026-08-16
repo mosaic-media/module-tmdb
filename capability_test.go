@@ -252,16 +252,14 @@ func TestSettingsUIRendersWithNoKeySet(t *testing.T) {
 }
 
 // A settings screen is a page a user may screenshot when asking for help, so the
-// key must never be *rendered*. It is masked to its last four characters.
+// key must never be rendered. It is masked to its last four characters.
 //
-// It is not absent from the screen, and this test asserts the strongest thing
-// that is actually true rather than the thing one would want. configureModule
-// replaces the settings document wholesale (platform#17, no partial update), so
-// every control that changes a language or a region must carry the key with it
-// or erase it — see configureInput for why that is recorded as a gap rather than
-// worked around. What this pins down is that the credential lives only inside
-// action payloads and never in a display property, which is the boundary that
-// can be held without a change to the Platform.
+// It is not absent from the screen: configureModule replaces the settings
+// document wholesale (platform#17, no partial update), so every control that
+// changes a language or a region must carry the key with it or erase it — see
+// configureInput. What this pins is narrower and is the boundary that can be
+// held without a change to the Platform: the credential lives only inside action
+// payloads and never in a display property.
 func TestSettingsUIRendersTheKeyOnlyMasked(t *testing.T) {
 	const key = "0123456789abcdef0123456789abcdef"
 	capability := tmdb.New(nil)
@@ -302,11 +300,10 @@ func withoutActions(node any) any {
 	case map[string]any:
 		out := make(map[string]any, len(n))
 		for key, value := range n {
-			// Both props that carry an Action. `submitAction` joined `action`
-			// when the settings screens became forms: a whole-document write
+			// Both of the props that carry an Action. A whole-document write
 			// means every form echoes the stored key back in the action it
-			// submits, which is a known trade, and what this test asserts is
-			// narrower — that the key is never in a property something *draws*.
+			// submits, which is the known trade above; what is asserted is that
+			// the key is never in a property something draws.
 			if key == "action" || key == "submitAction" {
 				continue
 			}

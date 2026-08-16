@@ -13,19 +13,18 @@ import (
 
 // The narrowings a catalog accepts, and where their values come from.
 //
-// A catalog filter is *declared with its permitted values* (SDK v0.25.0), so
-// the consumer builds a control from this source's own list and can never send
-// a value TMDB did not name. That is the whole reason these are fetched rather
-// than written down here: TMDB's genre list is versioned data behind an
-// endpoint, and a hardcoded copy is wrong the first time a genre is renamed
-// with nothing to report it.
+// A catalog filter is declared with its permitted values (SDK v0.25.0), so the
+// consumer builds a control from this source's own list and can never send a
+// value TMDB did not name. That is why these are fetched rather than written
+// down here: TMDB's genre list is versioned data behind an endpoint, and a
+// hardcoded copy is wrong the first time a genre is renamed, with nothing to
+// report it.
 //
-// **The filter names are TMDB's own discover parameters.** `CatalogFilter.Name`
-// is documented as source-native and opaque to the Platform, so using
-// `with_genres` rather than a Mosaic-flavoured "genre" means the selection needs
-// no translation on the way back in — it is already the query parameter. That
-// keeps this module's dialect inside this module, which is the point of an
-// anti-corruption layer: the Platform carries a string it never interprets.
+// The filter names are TMDB's own discover parameters. `CatalogFilter.Name` is
+// documented as source-native and opaque to the Platform, so using `with_genres`
+// rather than a Mosaic-flavoured "genre" means the selection needs no
+// translation on the way back in — it is already the query parameter, and the
+// Platform carries a string it never interprets.
 
 // filterGenre and filterWatchProvider are the two narrowings this module
 // offers. They are TMDB discover parameter names.
@@ -49,10 +48,9 @@ type facets struct {
 // filters renders the declarations a catalog carries, dropping any whose option
 // list is empty.
 //
-// **An empty list is dropped rather than declared**, because a filter with no
-// options cannot be exercised: a consumer would draw an empty control, and a
-// control that does nothing is the failure mode this whole mechanism is shaped
-// to avoid. A failed or unconfigured fetch therefore reads as "this catalog
+// An empty list is dropped rather than declared, because a filter with no
+// options cannot be exercised: a consumer would draw an empty control that does
+// nothing. A failed or unconfigured fetch therefore reads as "this catalog
 // offers no narrowing", which is exactly what it is.
 func (f facets) filters() []v1.CatalogFilter {
 	var out []v1.CatalogFilter
@@ -68,15 +66,15 @@ func (f facets) filters() []v1.CatalogFilter {
 }
 
 // facetCache holds the fetched option lists per native type. It lives on the
-// Capability rather than the Client for the same reason imageConfigCache does:
-// a Client is built per invocation from the settings the Platform hands in, and
+// Capability rather than the Client for the same reason imageConfigCache does: a
+// Client is built per invocation from the settings the Platform hands in, and
 // re-fetching a genre list on every catalog render would be a request per screen
-// to learn something that never changes.
+// to learn something that has not moved.
 //
-// It is keyed by native type *and region*, because the watch-provider list is
+// It is keyed by native type and region, because the watch-provider list is
 // regional — the services carrying titles in Ireland are not the services
 // carrying them in Japan, and a cache that ignored the region would serve one
-// deployment's list to another after a settings change.
+// region's list under another after a settings change.
 type facetCache struct {
 	mu      sync.Mutex
 	entries map[string]facetEntry
@@ -149,11 +147,11 @@ func (c *Client) fetchFacets(ctx context.Context, nativeType, region string) (fa
 		})
 	}
 
-	// **No region, no watch-provider filter.** Availability is national
-	// (see CLAUDE.md: a substitute region is a wrong answer rather than a partial
-	// one), and `with_watch_providers` without `watch_region` is a query TMDB
-	// answers with something nobody asked for. So the filter is simply not
-	// offered on a deployment that has not said where it is.
+	// No region, no watch-provider filter. Availability is national — a
+	// substitute region is a wrong answer rather than a partial one — and
+	// `with_watch_providers` without `watch_region` is a query TMDB answers with
+	// something nobody asked for. So the filter is not offered at all on a
+	// deployment that has not said where it is.
 	if region == "" {
 		return out, nil
 	}

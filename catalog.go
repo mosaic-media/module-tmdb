@@ -16,9 +16,7 @@ import (
 // there is nobody to ask what collections exist. The built-in set below is
 // therefore a curated choice, and `/discover` is what stops that choice being
 // the ceiling: a user can define their own ("French thrillers, rated above
-// seven") and it becomes a browsable catalog like any other. Nothing in the SDK
-// had to change for that — `CatalogProvider.Catalogs` already returns a list
-// rather than a constant.
+// seven") and it becomes a browsable catalog like any other.
 
 // catalogPage is how many items one TMDB list page holds. It is fixed by the
 // API, and it is what converts the Platform's item-offset Skip into a page
@@ -41,18 +39,18 @@ type CatalogDecl struct {
 	path string
 	// query is the user's own discover parameters, empty for a built-in.
 	query string
-	// filterable is whether this catalog can be narrowed, and it is a property of
-	// the *endpoint* rather than a policy choice.
+	// filterable is whether this catalog can be narrowed. It is a property of the
+	// endpoint rather than a policy choice.
 	//
 	// TMDB's list endpoints — `/movie/popular`, `/trending/movie/week` — take no
 	// `with_genres`. Only `/discover` filters, so a narrowed catalog is served by
 	// a discover query that reproduces the same ranking, which is what
-	// discoverQuery below holds. A catalog whose ranking has **no faithful
-	// discover equivalent** declares no filters rather than accepting one and
-	// answering with something adjacent: TMDB's trending is a computed
-	// popularity-over-time ranking that `/discover` cannot express, and a
-	// "Trending · Action" row silently served by raw popularity would be
-	// confidently wrong in the way a user cannot see.
+	// discoverQuery below holds. A catalog whose ranking has no faithful discover
+	// equivalent declares no filters rather than accepting one and answering with
+	// something adjacent: TMDB's trending is a computed popularity-over-time
+	// ranking that `/discover` cannot express, and a "Trending · Action" row
+	// silently served by raw popularity would be confidently wrong in the way a
+	// user cannot see.
 	filterable bool
 	// discoverQuery is the base query of that equivalent, merged under the
 	// caller's selected filters.
@@ -117,7 +115,7 @@ func catalogsFor(custom []customCatalog) []CatalogDecl {
 			Name:  name,
 			path:  "/discover/" + nativeType,
 			query: query,
-			// A custom catalog is *already* a discover query, so it filters with no
+			// A custom catalog is already a discover query, so it filters with no
 			// equivalent to find. The user's own parameters are the base, and a
 			// selected filter narrows within them rather than replacing them — a
 			// user who wrote `with_original_language=fr` and then picks Thriller
@@ -131,7 +129,8 @@ func catalogsFor(custom []customCatalog) []CatalogDecl {
 }
 
 // reservedDiscoverParams are the parameters this module sets itself. A
-// user-supplied query must not be able to set them.
+// user-supplied query must not be able to set them. Add to this map; never
+// remove from it.
 //
 // `api_key` is the one that matters and the reason this function exists: a
 // discover query is free text a user types into a settings screen, and without
@@ -235,7 +234,7 @@ func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string,
 	out := make([]Preview, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		// A list or discover endpoint's results carry no media_type — the endpoint
-		// *is* the type — so it comes from the catalog rather than from the record.
+		// is the type — so it comes from the catalog rather than from the record.
 		// The trending endpoints do return one; taking the declaration's either way
 		// keeps a single path.
 		out = append(out, c.preview(r, decl.Type))
@@ -246,14 +245,14 @@ func (c *Client) CatalogItems(ctx context.Context, catalogID, nativeType string,
 // narrowingFor validates a caller's selected filters against what a catalog
 // actually declared, and returns them as discover parameters.
 //
-// **An unrecognised name or value is an error, not something to drop.** The SDK
-// is explicit that a provider must decline a filter it does not understand
-// rather than answering with the unfiltered page, because a silently widened
-// query returns a plausible list for a question nobody asked — and unlike an
-// absent control, a user cannot see it. The same reasoning is why the value is
-// checked against the declared options rather than passed through: `with_genres`
-// accepts arbitrary text and TMDB answers an unknown genre id with an unfiltered
-// page, so passing it on would produce exactly the failure this refuses.
+// An unrecognised name or value is an error, not something to drop. The SDK is
+// explicit that a provider must decline a filter it does not understand rather
+// than answering with the unfiltered page, because a silently widened query
+// returns a plausible list for a question nobody asked — and unlike an absent
+// control, a user cannot see it. The value is checked against the declared
+// options for the same reason: `with_genres` accepts arbitrary text and TMDB
+// answers an unknown genre id with an unfiltered page, so passing it on would
+// produce exactly the failure this refuses.
 func narrowingFor(decl CatalogDecl, declared []v1.CatalogFilter, selected map[string]string) (map[string]string, error) {
 	if len(selected) == 0 {
 		return nil, nil

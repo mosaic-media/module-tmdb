@@ -19,13 +19,12 @@ import (
 // the Platform's registry and real PostgreSQL is a separate test in the platform
 // repository.
 //
-// **The fake is reached by rewriting the request host, not by making the API
-// base configurable.** The base URL is a constant on purpose — there is exactly
-// one TMDB — and adding a settable field so tests can point elsewhere would put
-// a seam in the production type that only tests use. Since the module already
-// accepts the Platform's http.Client, a transport that redirects
-// api.themoviedb.org is a complete injection through a seam that had to exist
-// anyway.
+// The fake is reached by rewriting the request host, not by making the API base
+// configurable. The base URL is a constant on purpose — there is exactly one
+// TMDB — and adding a settable field so tests can point elsewhere would put a
+// seam in the production type that only tests use. The module already accepts
+// the Platform's http.Client, so a transport that redirects api.themoviedb.org
+// is a complete injection through a seam that had to exist anyway.
 
 // redirect returns an http.Client whose every request is sent to server instead
 // of to its real host, preserving path and query.
@@ -451,10 +450,9 @@ func (f *fakeContent) AttachContentPart(_ context.Context, cmd v1.AttachContentP
 	return v1.AttachContentPartResult{Part: p}, nil
 }
 
-// SetContentArtwork records nothing: neither module fills the artwork role, so
-// this exists to satisfy v1.ContentService and would be a lie if it pretended to
-// store something. It was missing because this module sat two SDK releases
-// behind, where the method did not exist yet.
+// SetContentArtwork records nothing: this module does not fill the artwork role,
+// so the method exists to satisfy v1.ContentService and would be a lie if it
+// pretended to store something.
 func (f *fakeContent) SetContentArtwork(_ context.Context, _ v1.SetContentArtworkCommand) (v1.SetContentArtworkResult, error) {
 	return v1.SetContentArtworkResult{}, nil
 }

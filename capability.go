@@ -26,7 +26,7 @@ const (
 	// the one every TMDB record has, whereas an IMDb id is present on most and
 	// guaranteed on none.
 	providerScheme = "tmdb"
-	// imdbScheme and tvdbScheme are the *other* schemes a materialised work is
+	// imdbScheme and tvdbScheme are the other schemes a materialised work is
 	// bound under when TMDB reports them. They are what let a title added through
 	// this module dedup against sources that key on something else — every
 	// Stremio addon and Cinemeta use IMDb ids, and television-oriented sources
@@ -40,7 +40,7 @@ const (
 	// reconciliation has something to join on and does not have to re-derive it.
 	wikidataScheme = "wikidata"
 	// defaultLanguage is the language TMDB is queried in when a user has set
-	// none. TMDB requires *some* language and falls back to English itself; being
+	// none. TMDB requires a language and falls back to English itself; being
 	// explicit means the value shown in settings is the value in use.
 	defaultLanguage = "en-US"
 )
@@ -50,11 +50,11 @@ const (
 // error because every surface that reports it should say the same thing.
 var errNoAPIKey = errors.New("TMDB API key not set — add one in Settings › TMDB (the module cannot read anything without it)")
 
-// errCredentialRejected is returned when TMDB refuses the credential that *was*
+// errCredentialRejected is returned when TMDB refuses a credential that was
 // sent. It is deliberately distinct from errNoAPIKey: reporting a revoked or
 // mistyped key as "not set" sends a user to look at an empty field that is not
-// empty, and with a bundled key in play it would be actively misleading — the
-// user has set nothing and there is nothing for them to fix in settings.
+// empty, and with a bundled key in play the user has set nothing and has nothing
+// to fix in settings.
 var errCredentialRejected = errors.New("TMDB rejected the credential — if you set your own key, check it in Settings › TMDB; otherwise the key bundled with Mosaic is no longer valid")
 
 // defaultReadAccessToken is a TMDB v4 read access token linked into the binary
@@ -64,15 +64,14 @@ var errCredentialRejected = errors.New("TMDB rejected the credential — if you 
 //
 //	go build -ldflags "-X github.com/mosaic-media/module-tmdb.defaultReadAccessToken=$TMDB_RAC" ./cmd/mosaic-platform
 //
-// **It is not a secret once the binary ships, and nothing here pretends
-// otherwise.** A string linked into a distributed binary is recoverable with
-// `strings`, so this is a *shared* credential whose exposure is accepted rather
-// than a hidden one. What makes that acceptable is what the credential can do:
-// it is read-only, it reaches only TMDB's public catalogue, and it is revocable
-// centrally if it is abused. What it costs is a shared rate limit and a single
-// point of failure across every deployment that has not set its own — which is
-// exactly why a user can override it, and why the settings screen says plainly
-// which one is in use.
+// It is not a secret once the binary ships: a string linked into a distributed
+// binary is recoverable with `strings`, so this is a shared credential whose
+// exposure is accepted rather than a hidden one. What makes that acceptable is
+// what the credential can do — it is read-only, it reaches only TMDB's public
+// catalogue, and it is revocable centrally if it is abused. What it costs is a
+// shared rate limit and a single point of failure across every deployment that
+// has not set its own, which is why a user can override it and why the settings
+// screen says which one is in use.
 //
 // It is never written into the settings document, never rendered, and never
 // logged. The one place it could leak is a settings screen that treats it like a
@@ -136,10 +135,9 @@ type settings struct {
 	// submitted, as a name, a query and a type.
 	//
 	// A form writes named fields into the settings document and cannot append to
-	// a list — the mechanism it replaces could, because it rewrote the whole
-	// document on its way out of the client. So the addition rides as fields and
-	// this module folds it into Catalogs on read, keeping the append here rather
-	// than putting a list operation on the wire for every client to implement.
+	// a list, so the addition rides as fields and this module folds it into
+	// Catalogs on read. That keeps the append here rather than putting a list
+	// operation on the wire for every client to implement.
 	//
 	// It needs no clearing: the form's action carries the already-folded list, so
 	// the next submit's Catalogs already contains the previous addition, and the
@@ -203,19 +201,12 @@ func settingsFrom(document []byte) (settings, error) {
 // the settings form could carry two fields, splits a "name | query" Name into
 // its two parts.
 //
-// The screen used to submit the pair as one value because the control it was
-// built from submitted on its own, with nowhere to hold a half-finished entry
-// between two of them. It now asks for two fields, so nothing writes the joined
-// shape any more — but documents already stored in it must keep working, which
-// is what the split is for. Idempotent: once split, the two fields are stored
-// separately and this does nothing.
+// The form now asks for two fields, so nothing writes the joined shape any more,
+// but documents already stored in it must keep working. The split is idempotent:
+// once the two fields are stored separately this does nothing.
 func normaliseCatalog(c customCatalog) customCatalog {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Query = strings.TrimSpace(c.Query)
-	// A document written before the form could carry two fields may still hold
-	// "name|query" in Name — the workaround for a substitution that filled every
-	// placeholder in an action with the same string. Kept so those documents keep
-	// working; nothing writes this shape any more.
 	if c.Query == "" {
 		if name, query, ok := strings.Cut(c.Name, "|"); ok {
 			c.Name, c.Query = strings.TrimSpace(name), strings.TrimSpace(query)
@@ -228,9 +219,8 @@ func normaliseCatalog(c customCatalog) customCatalog {
 }
 
 // clientFrom builds a configured client from the settings document, refusing
-// when there is no API key. That refusal is the module's whole first-run story:
-// the capability is registered and every role is reachable, and each says the
-// same actionable thing until a key exists.
+// when there is no API key. Every role stays registered and reachable and each
+// reports the same actionable refusal until a key exists.
 //
 // It takes a context because resolving TMDB's image CDN layout may need a call.
 // That call is cached for a day and falls back to a built-in default on any
@@ -256,21 +246,19 @@ func (c *Capability) clientFrom(ctx context.Context, document []byte) (*Client, 
 // otherwise the token linked in at build time. It reports which, so a settings
 // screen can say so without ever holding the bundled value.
 //
-// The order is the whole point of the feature. A deployment works out of the box
-// on Mosaic's shared token, and a user who wants their own rate limit, their own
-// TMDB account, or simply not to depend on ours sets a key and it wins
-// immediately — no flag, no opt-out setting, no restart.
+// The order is deliberate: a deployment works out of the box on Mosaic's shared
+// token, and a user who wants their own rate limit or their own TMDB account
+// sets a key and it wins immediately — no flag, no opt-out setting, no restart.
 //
-// **This is the only function in the module that reads defaultReadAccessToken**
+// This is the only function in the module that reads defaultReadAccessToken
 // (architecture#4 rule 4). The two test files that also read it are the deliberate
 // exceptions and ship in no binary: the linker guard, whose whole job is to prove
 // the symbol path still resolves, and the internal test helper that stands a
-// token in. Keeping it to one place is what makes "the bundled token is never
-// written into the settings document, never rendered and never logged" a property
-// that can be checked by reading rather than a claim that has to be trusted:
-// settings.APIKey holds the user's key and nothing else, everywhere.
+// token in. One reader is what keeps "never written into the settings document,
+// never rendered, never logged" checkable by reading: settings.APIKey holds the
+// user's key and nothing else, everywhere.
 //
-// Anything that needs to know only *whether* a bundled token exists asks
+// Anything that needs to know only whether a bundled token exists asks
 // bundledTokenPresent below, which asks this function rather than the variable.
 func resolveToken(s settings) (token string, bundled bool, ok bool) {
 	if s.APIKey != "" {
@@ -289,9 +277,7 @@ func resolveToken(s settings) (token string, bundled bool, ok bool) {
 // is the only caller. It resolves against a settings document holding no user
 // key, so the answer arrives as resolveToken's `bundled` flag and the token
 // itself never leaves that function. A screen that tested the variable directly
-// would answer the same question and cost rule 4, which is what happened here:
-// the presence checks were reading defaultReadAccessToken while the comment above
-// still claimed a single reader.
+// would answer the same question and cost rule 4.
 func bundledTokenPresent() bool {
 	_, bundled, _ := resolveToken(settings{})
 	return bundled
@@ -305,10 +291,10 @@ func bundledTokenPresent() bool {
 // through `/find`. Without this the richer provider could not describe a single
 // work in such a library, because it would hold no identifier it recognised.
 //
-// Note what this does *not* do: it does not decide that TMDB should answer for
-// another module's ref. Which provider wins for a given ref is the open
-// precedence seam platform#23 named, and it is the Platform's to settle. This only
-// makes the module capable of answering when asked.
+// It does not decide that TMDB should answer for another module's ref. Which
+// provider wins for a given ref is the open precedence seam platform#23 named, and
+// it is the Platform's to settle; this only makes the module capable of
+// answering when asked.
 func (c *Client) resolveRef(ctx context.Context, ref v1.ContentRef) (string, string, error) {
 	nativeID, nativeType := ref.NativeID, ref.NativeType
 	if nativeID == "" {
@@ -361,10 +347,10 @@ func (c *Capability) Manifest() v1.Manifest {
 //
 // It creates the Work with its artwork and external ids, binds the source, and
 // builds the containment tree: a film as Work → feature item, a series as Work →
-// season container → episode item. It attaches **no Parts**, and that is the
-// point rather than an omission: TMDB knows what exists, not where to get it, so
-// a TMDB import is a described library with nothing to play until a stream
-// source is installed alongside it.
+// season container → episode item. It attaches no Parts, and that is the shape
+// rather than an omission: TMDB knows what exists, not where to get it, so a
+// TMDB import is a described library with nothing to play until a stream source
+// is installed alongside it.
 func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.ImportRequest) (v1.ImportResult, error) {
 	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
@@ -384,9 +370,8 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 
 	// Dedup before writing, under both schemes. The TMDB id catches a re-import
 	// through this module; the IMDb id catches the same title already
-	// materialised by a source that keys on IMDb — without which adding
-	// *Arrival* from TMDB after adding it from a Stremio addon would produce a
-	// second Work for one film.
+	// materialised by a source that keys on IMDb — without which adding one film
+	// from TMDB after adding it from a Stremio addon would produce two Works.
 	if existing, found, err := c.find(ctx, svc, caller, title); err != nil {
 		return v1.ImportResult{}, err
 	} else if found {
@@ -402,24 +387,22 @@ func (c *Capability) Import(ctx context.Context, svc v1.ContentService, req v1.I
 		MediaType:   mediaTypeFor(nativeType),
 		Title:       name,
 		ExternalIDs: externalIDs(title),
-		// Streaming availability, stored so the library can be *grouped* by
+		// Streaming availability, stored so the library can be grouped by
 		// service. Everything else descriptive is re-derived live from the
-		// provider (sdk#3); this is written down for the same reason artwork
-		// is (platform#45) — a question asked across the whole library cannot be
+		// provider (sdk#3); this is written down for the same reason artwork is
+		// (platform#45) — a question asked across the whole library cannot be
 		// answered by a round trip per title.
 		// time.Now rather than a Platform clock: the SDK exposes none, and this
 		// is a wall-clock fact about when an external service was asked rather
 		// than a Platform state transition that a test would need to control.
 		Attributes: attributes(title, time.Now()),
-		// Stored on the node rather than re-derived per read (platform#45). This is
-		// the metadata the import already holds, so storing it costs nothing and
-		// saves a provider round trip for every card that renders this title.
+		// Stored on the node rather than re-derived per read (platform#45). The
+		// import already holds it, so storing it costs nothing and saves a
+		// provider round trip for every card that renders this title.
 		Artwork: v1.Artwork{Poster: title.Poster, Backdrop: title.Backdrop, Logo: title.Logo},
-		// Genres, for the same reason and on the same terms as artwork above: a
-		// facet is a question asked across the whole library, and it cannot be
-		// answered by a round trip per title. TMDB's own words, not mapped onto
-		// a Mosaic vocabulary — the Platform reconciles nothing here, and says
-		// so (SDK v0.25.0).
+		// Genres, on the same terms as artwork above: a facet is a question asked
+		// across the whole library. TMDB's own words, not mapped onto a Mosaic
+		// vocabulary — the Platform reconciles nothing here (SDK v0.25.0).
 		Genres: title.Genres,
 	})
 	if err != nil {
@@ -539,7 +522,7 @@ func (c *Capability) find(ctx context.Context, svc v1.ContentService, caller v1.
 func (c *Capability) bind(ctx context.Context, svc v1.ContentService, caller v1.Caller, workID v1.NodeID, title Title) error {
 	bindings := []struct{ provider, ref string }{{providerScheme, title.ID}}
 	// Wikidata is deliberately absent: it goes in the external-id document but is
-	// not a *source*, and a binding asserts that something can be sourced from
+	// not a source, and a binding asserts that something can be sourced from
 	// there.
 	for _, extra := range []struct{ scheme, value string }{
 		{imdbScheme, title.IMDbID},
@@ -563,7 +546,7 @@ func (c *Capability) bind(ctx context.Context, svc v1.ContentService, caller v1.
 
 // refFrom builds a ContentRef from a preview. The ref carries the TMDB id as the
 // external identity the Platform dedups on, which is what makes a search result
-// for a title already in the library read as *In library* rather than as new
+// for a title already in the library read as "in library" rather than as new
 // (platform#18).
 func refFrom(p Preview) v1.ContentRef {
 	return v1.ContentRef{
@@ -590,19 +573,17 @@ func mediaTypeFor(nativeType string) v1.MediaType {
 	}
 }
 
-// externalIDs builds the Work's external-id document — the flat scheme-to-id
-// shape FindContentByExternalID reads. Both ids go in when TMDB has both, so a
-// later lookup under either scheme resolves.
 // WatchAttribute is the key this module writes streaming availability under in a
 // node's attributes document, and WatchAttributeVersion is the shape's version.
 //
-// **They are exported because they are a published shape, not a private one.**
-// `SearchContentQuery.AttributesContain` lets anything query what any module
-// wrote, so the moment a caller filters on `{"tmdbWatch":{"providers":[…]}}`
-// this key is a contract. Changing its meaning breaks a query written against
-// it, which is why the version travels beside it: a consumer can tell a document
-// it understands from one it does not, and a future shape can be written under a
-// new version without silently answering old questions wrongly.
+// They are exported because they are a published shape rather than a private
+// one. `SearchContentQuery.AttributesContain` lets anything query what any
+// module wrote, so the moment a caller filters on
+// `{"tmdbWatch":{"providers":[…]}}` this key is a contract. Changing its meaning
+// breaks a query written against it, which is why the version travels beside it:
+// a consumer can tell a document it understands from one it does not, and a
+// future shape can be written under a new version without silently answering old
+// questions wrongly.
 const (
 	WatchAttribute        = "tmdbWatch"
 	WatchAttributeVersion = 1
@@ -610,16 +591,16 @@ const (
 
 // watchAttribute is the stored shape.
 //
-// Providers is a flat array of names *as well as* the richer Offers, and the
-// duplication is the point: containment against a flat array of strings is what
+// Providers is a flat array of names as well as the richer Offers, and the
+// duplication is deliberate: containment against a flat array of strings is what
 // a GIN index answers efficiently, and `{"tmdbWatch":{"providers":["Netflix"]}}`
 // is a query somebody can write by hand. Offers carries the terms for a screen
 // that renders the group.
 //
-// CheckedAt is what makes the staleness visible. Nothing refreshes this today —
-// the jobs runner does not exist — and availability churns monthly, so a
-// consumer that groups by it must be able to say how old the answer is, and the
-// eventual refresh needs to know what to re-fetch first.
+// CheckedAt is what makes the staleness visible. Nothing in this module
+// refreshes the document, and availability churns monthly, so a consumer that
+// groups by it must be able to say how old the answer is, and any later refresh
+// needs to know what to re-fetch first.
 type watchAttribute struct {
 	Version   int           `json:"version"`
 	Region    string        `json:"region"`
@@ -657,6 +638,9 @@ func attributes(title Title, at time.Time) []byte {
 	return document
 }
 
+// externalIDs builds the Work's external-id document — the flat scheme-to-id
+// shape FindContentByExternalID reads. Every scheme TMDB reported goes in, so a
+// later lookup under any of them resolves.
 func externalIDs(title Title) []byte {
 	ids := map[string]string{providerScheme: title.ID}
 	for scheme, value := range map[string]string{

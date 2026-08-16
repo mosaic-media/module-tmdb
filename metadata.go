@@ -11,11 +11,9 @@ import (
 // the detail screen for both a virtual result and an in-library node, and it is
 // the detail Import draws on (sdk#2, sdk#3).
 //
-// This is the role the module exists for. Everything it returns that a Stremio
-// meta addon also returns is a convenience; the two fields that are not — the
-// clearlogo and the cast headshots and character names — are the recorded gaps
-// (sdk#3) that no addon protocol carries, and they are why a metadata module
-// was worth building rather than configuring another addon.
+// The fields no addon protocol carries — the clearlogo, and cast headshots with
+// character names — are sdk#3's recorded gaps, and they are why this module
+// exists rather than another addon.
 func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.ContentMetadata, error) {
 	client, err := c.clientFrom(ctx, req.Settings)
 	if err != nil {
@@ -32,12 +30,11 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 		return v1.ContentMetadata{}, fmt.Errorf("fetch TMDB detail: %w", err)
 	}
 
-	// Through the SDK's ambient telemetry rather than a print (sdk#5): this
-	// lands in the Platform's records, attributed to this module and correlated
-	// with the request that caused it. What is worth recording is which of the
-	// expensive-to-obtain fields actually arrived — a detail screen missing its
-	// logo is otherwise indistinguishable from a detail screen whose logo failed
-	// to load.
+	// Through the SDK's ambient telemetry rather than a print (sdk#5), so it
+	// lands in the Platform's records attributed to this module and correlated
+	// with the request that caused it. What is recorded is which of the
+	// expensive-to-obtain fields actually arrived: a detail screen missing its
+	// logo is otherwise indistinguishable from one whose logo failed to load.
 	v1.TelemetryFrom(ctx).Debug("tmdb metadata resolved",
 		v1.String("native_type", req.Ref.NativeType),
 		v1.String("native_id", req.Ref.NativeID),
@@ -70,9 +67,9 @@ func (c *Capability) Metadata(ctx context.Context, req v1.MetadataRequest) (v1.C
 }
 
 // watchFrom maps streaming availability onto the SDK's projection. It is the one
-// field here that describes something *outside* Mosaic, and the attribution
+// field here that describes something outside Mosaic, and the attribution
 // travels with it because the upstream's terms require it to be shown wherever
-// the offers are.
+// the offers are: do not drop it when mapping.
 func watchFrom(watch *WatchAvailability) *v1.WatchAvailability {
 	if watch == nil {
 		return nil

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// The TMDB v3 HTTP client. This file is the anti-corruption layer (module-stremio-addons#2):
+// The TMDB v3 HTTP client, and the anti-corruption layer (module-stremio-addons#2):
 // every TMDB-ism — its two auth schemes, its split of one logical record across
 // `append_to_response` sub-objects, its image paths that are not URLs, its
 // per-season episode endpoint, its parallel field names for films and series —
@@ -59,6 +59,7 @@ type Client struct {
 // NewClient builds a client over an HTTP client and a resolved settings value.
 // The Platform's own client is passed in rather than built here: it carries the
 // netguard dial guard and the outbound telemetry seam (platform#33).
+//
 // The token is passed in rather than read from s.APIKey, because the credential
 // in use is not always the user's: it may be the one linked in at build time.
 // Only resolveToken decides which, and settings.APIKey holds the user's key and
@@ -153,7 +154,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 
 		case resp.StatusCode == http.StatusUnauthorized:
 			resp.Body.Close()
-			// Distinct from "no credential": something *was* sent and TMDB
+			// Distinct from "no credential": a credential was sent and TMDB
 			// refused it. Reporting that as "not set" would point a user at an
 			// empty field that is not empty — and with a bundled token in play,
 			// at a field they never filled in.
@@ -256,19 +257,17 @@ func (c *Client) FindByIMDb(ctx context.Context, imdbID string) (string, string,
 	}
 }
 
-// Detail fetches one title's full record in **one** request.
+// Detail fetches one title's full record in a single request.
 //
-// The single request is `append_to_response`, and it is worth naming because the
-// obvious implementation is eight. TMDB splits credits, images, external ids,
-// keywords, recommendations, videos and certifications onto their own endpoints;
-// appending folds all of them into one round trip, which for a detail screen is
-// the difference between one latency and eight. TMDB allows twenty appended
-// sub-requests, so this is well inside the budget.
+// The obvious implementation is eight requests: TMDB splits credits, images,
+// external ids, keywords, recommendations, videos and certifications onto their
+// own endpoints. `append_to_response` folds all of them into one round trip, and
+// TMDB allows twenty appended sub-requests, so this is well inside the budget.
 //
-// Two things it cannot fold in, and both are named rather than hidden: a
-// series' episodes cost one request per season, because TMDB has no endpoint
-// returning a show's whole episode list; and a film's franchise costs one more,
-// because the detail carries only the collection's name and id.
+// Two things it cannot fold in: a series' episodes cost one request per season,
+// because TMDB has no endpoint returning a show's whole episode list, and a
+// film's franchise costs one more, because the detail carries only the
+// collection's name and id.
 func (c *Client) Detail(ctx context.Context, nativeType, id string) (Title, error) {
 	if nativeType != typeMovie && nativeType != typeTV {
 		return Title{}, fmt.Errorf("unsupported TMDB type %q; expected %q or %q", nativeType, typeMovie, typeTV)
@@ -455,7 +454,7 @@ type Title struct {
 	Genres     []string
 	Keywords   []string
 	// Certification is the age rating for the configured region, empty when TMDB
-	// has none for it.
+	// has none for it. Never another region's rating — see certificationOf.
 	Certification string
 	Rating        float64
 	Runtime       string
@@ -475,7 +474,8 @@ type Title struct {
 	Collection *Collection
 	// Watch is where the title can be streamed, rented or bought in the
 	// configured region — nil when no region is set or TMDB knows of nothing
-	// there. It describes availability *elsewhere* and is never a source.
+	// there. It describes availability outside Mosaic and is never a source: no
+	// offer may become a Part, a source binding or a play control.
 	Watch *WatchAvailability
 }
 
@@ -725,8 +725,8 @@ func (c *Client) episode(r rawEpisode, season int) Episode {
 }
 
 // maxCast is how many billed cast members a detail carries. A detail screen
-// shows the *top* cast; TMDB returns the entire credited ensemble, which for a
-// large production is hundreds of people and megabytes of headshots.
+// shows the top of the cast list; TMDB returns the entire credited ensemble,
+// which for a large production is hundreds of people and megabytes of headshots.
 const maxCast = 18
 
 // title translates a full TMDB record into the module's own shape.
@@ -938,9 +938,10 @@ func (c *Client) watchOf(r rawTitle) *WatchAvailability {
 			if p.ProviderName == "" {
 				continue
 			}
-			// A service commonly appears under several types — rent *and* buy is
-			// the norm. The first is the best terms on offer, since the groups are
-			// ordered that way, so a later duplicate adds nothing a viewer needs.
+			// A service commonly appears under several types; rent and buy
+			// together is the norm. The first is the best terms on offer, since
+			// the groups are ordered that way, so a later duplicate adds nothing a
+			// viewer needs.
 			if seen[p.ProviderName] {
 				continue
 			}

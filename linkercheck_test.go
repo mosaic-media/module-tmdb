@@ -7,12 +7,11 @@ import "testing"
 // The linker-injection guard, behind a build tag so it runs only in the pass
 // that supplies the flag.
 //
-// **`-X` on a path that does not resolve is silently ignored.** Rename the
-// variable, move it to another file's package, or mistype the module path in
-// the release workflow, and the build still succeeds — it just links nothing,
-// and every deployment that relied on the bundled token loses metadata with no
-// error anywhere. That is the one failure this whole mechanism can have and it
-// reports itself nowhere, so it is checked here rather than trusted.
+// `-X` on a path that does not resolve is silently ignored. Rename the variable,
+// move it to another file's package, or mistype the module path in the release
+// workflow, and the build still succeeds — it just links nothing, and every
+// deployment that relied on the bundled token loses metadata with no error
+// anywhere. Nothing else reports that failure, so it is checked here.
 //
 // The container gate runs the suite twice: once normally, and once as
 //
